@@ -244,24 +244,14 @@
 
   <main>
     <section class="card">
-      <div class="card-head"><span class="idx">01</span><h2>API キー</h2></div>
-      <div class="card-body">
-        <div class="row">
-          <label for="apikey">TypeSafe API キー</label>
-          <input id="apikey" type="password" v-model="apiKey" placeholder="tsk_...">
-          <p class="hint">キーはこの画面内のメモリにのみ保持され、送信先は api.typesafe.ai のみです。保存はされません。</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><span class="idx">02</span><h2>利用者の質問</h2></div>
+      <div class="card-head"><span class="idx">01</span><h2>利用者の質問</h2></div>
       <div class="card-body">
         <div class="row">
           <label for="question">質問文</label>
-          <textarea id="question" v-model="question" rows="4" placeholder="例:明治35年頃の東京の住宅地図はありますか"></textarea>
+          <textarea id="question" v-model="question" rows="4" maxlength="500" placeholder="例:明治35年頃の東京の住宅地図はありますか"></textarea>
+          <p class="hint">{{ question.length }} / 500文字</p>
         </div>
-        <button @click="submit" :disabled="loading || !question.trim() || !apiKey.trim()">
+        <button @click="submit" :disabled="loading || !question.trim()">
           {{ loading ? '判定中…' : '振り分ける' }}
         </button>
         <div v-if="errorMsg" class="error-box">{{ errorMsg }}</div>
@@ -269,7 +259,7 @@
     </section>
 
     <section class="card" v-if="result">
-      <div class="card-head"><span class="idx">03</span><h2>判定結果</h2></div>
+      <div class="card-head"><span class="idx">02</span><h2>判定結果</h2></div>
       <div class="card-body">
 
         <span v-if="result.consultationOnly >= 0.5" class="consult-flag">
@@ -303,7 +293,7 @@
     </section>
 
     <section class="card" v-else>
-      <div class="card-head"><span class="idx">03</span><h2>判定結果</h2></div>
+      <div class="card-head"><span class="idx">02</span><h2>判定結果</h2></div>
       <div class="card-body">
         <p class="empty-state">質問を入力して「振り分ける」を押すと、ここに結果が表示されます。</p>
       </div>
@@ -320,6 +310,9 @@
 <script>
 const { createApp, ref, computed } = Vue;
 
+// 表示用のラベル・所在階・説明文。実際にjevへ渡すcriteriaは
+// functions/systemone.js 側で管理しているので、両方を変更する場合は
+// キー名(humanities, science_economy, ... )を一致させること。
 const ROOMS = {
   humanities: {
     label: "人文総合情報室",
@@ -370,47 +363,28 @@ const ROOMS = {
 
 createApp({
   setup() {
-    const apiKey = ref("");
     const question = ref("");
     const loading = ref(false);
     const errorMsg = ref("");
     const result = ref(null);
     const modelUsed = ref("");
 
-    const criteria = {};
-    for (const key in ROOMS) criteria[key] = ROOMS[key].desc;
-
+    // 実際の model / questions の組み立てはサーバー側(functions/systemone.js)で行う。
+    // クライアントは質問文(state)だけを送る。
     async function submit() {
       errorMsg.value = "";
       result.value = null;
       loading.value = true;
       try {
-        const res = await fetch("https://api.typesafe.ai/v1/systemone", {
+        const res = await fetch("/systemone", {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiKey.value.trim()}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            state: question.value,
-            model: "jev-latest",
-            questions: {
-              room: {
-                type: "choice",
-                instructions: "利用者の質問に最も適した国立国会図書館 東京本館の専門室を選んでください",
-                criteria
-              },
-              consultation_only: {
-                type: "noul",
-                instructions: "利用者は特定の資料ではなく、調べ方や探し方の相談をしている"
-              }
-            }
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: question.value })
         });
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          throw new Error(`API がエラーを返しました(HTTP ${res.status})。${text.slice(0, 200)}`);
+          throw new Error(`サーバーがエラーを返しました(HTTP ${res.status})。${text.slice(0, 200)}`);
         }
 
         const data = await res.json();
@@ -425,7 +399,7 @@ createApp({
           consultationOnly: consultAns ? consultAns.noul : 0
         };
       } catch (e) {
-        errorMsg.value = e.message || "通信に失敗しました。API キーとネットワーク接続をご確認ください。";
+        errorMsg.value = e.message || "通信に失敗しました。しばらく待って再度お試しください。";
       } finally {
         loading.value = false;
       }
@@ -449,7 +423,7 @@ createApp({
     }
 
     return {
-      apiKey, question, loading, errorMsg, result, modelUsed,
+      question, loading, errorMsg, result, modelUsed,
       sortedRooms, roomLabel, roomMeta, pct, submit
     };
   }

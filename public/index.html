@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>専門室振り分け — 国立国会図書館 東京本館</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+<style>
+  :root{
+    --ink:#1c2a24;
+    --paper:#e9e4d6;
+    --paper-deep:#ddd6c2;
+    --panel:#faf8f1;
+    --pine:#1f3a2e;
+    --pine-soft:#345245;
+    --gilt:#a9803f;
+    --gilt-soft:#cba86a;
+    --line:#c9c0a6;
+    --danger:#8a3a2b;
+    font-family:'Zen Kaku Gothic New', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    background-image:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.015) 0px, rgba(0,0,0,0.015) 1px, transparent 1px, transparent 3px);
+    color:var(--ink);
+    min-height:100vh;
+    padding:48px 24px 80px;
+  }
+  .wrap{max-width:920px;margin:0 auto;}
+  header{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    gap:24px;
+    border-bottom:2px solid var(--pine);
+    padding-bottom:20px;
+    margin-bottom:36px;
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.04em;
+    color:var(--pine-soft);
+    margin:0 0 6px;
+  }
+  h1{
+    font-family:'Shippori Mincho', serif;
+    font-weight:700;
+    font-size:32px;
+    margin:0;
+    color:var(--pine);
+    line-height:1.3;
+  }
+  .catalog-no{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color:var(--gilt);
+    text-align:right;
+    line-height:1.6;
+  }
+  main{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:28px;
+  }
+  .card{
+    background:var(--panel);
+    border:1px solid var(--line);
+    box-shadow:3px 3px 0 var(--paper-deep);
+  }
+  .card-head{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:14px 20px;
+    border-bottom:1px solid var(--line);
+  }
+  .card-head .idx{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color:var(--gilt);
+  }
+  .card-head h2{
+    font-size:15px;
+    font-weight:500;
+    margin:0;
+    color:var(--pine);
+  }
+  .card-body{padding:22px 20px;}
+  label{
+    display:block;
+    font-size:13px;
+    color:var(--pine-soft);
+    margin-bottom:6px;
+  }
+  textarea, input[type="text"], input[type="password"]{
+    width:100%;
+    font-family:inherit;
+    font-size:15px;
+    padding:11px 12px;
+    border:1px solid var(--line);
+    background:#fff;
+    color:var(--ink);
+    resize:vertical;
+  }
+  textarea:focus, input:focus{
+    outline:2px solid var(--gilt-soft);
+    outline-offset:1px;
+  }
+  .row{margin-bottom:16px;}
+  .two-col{
+    display:grid;
+    grid-template-columns:1fr 220px;
+    gap:16px;
+  }
+  .hint{
+    font-size:12px;
+    color:#6b6250;
+    margin-top:5px;
+  }
+  button{
+    font-family:'Zen Kaku Gothic New', sans-serif;
+    font-size:15px;
+    font-weight:500;
+    padding:11px 24px;
+    background:var(--pine);
+    color:#f3efe2;
+    border:1px solid var(--pine);
+    cursor:pointer;
+    letter-spacing:0.02em;
+  }
+  button:hover:not(:disabled){background:var(--pine-soft);}
+  button:disabled{opacity:0.5;cursor:default;}
+  .error-box{
+    margin-top:14px;
+    padding:12px 14px;
+    background:#f4e8e3;
+    border:1px solid var(--danger);
+    color:var(--danger);
+    font-size:13px;
+    line-height:1.6;
+  }
+  .result-top{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap:16px;
+    padding-bottom:16px;
+    margin-bottom:16px;
+    border-bottom:1px dashed var(--line);
+  }
+  .result-room{
+    font-family:'Shippori Mincho', serif;
+    font-size:24px;
+    font-weight:700;
+    color:var(--pine);
+  }
+  .result-room .loc{
+    font-family:'Zen Kaku Gothic New', sans-serif;
+    font-size:13px;
+    font-weight:400;
+    color:#6b6250;
+    display:block;
+    margin-top:4px;
+  }
+  .confidence{
+    text-align:right;
+    font-family:'JetBrains Mono', monospace;
+  }
+  .confidence .num{font-size:22px;color:var(--gilt);}
+  .confidence .lbl{font-size:11px;color:#6b6250;}
+  .consult-flag{
+    display:inline-block;
+    margin-bottom:18px;
+    padding:6px 12px;
+    background:var(--paper-deep);
+    border:1px solid var(--gilt-soft);
+    font-size:12px;
+    color:var(--pine-soft);
+  }
+  .shelf{margin-top:4px;}
+  .shelf-row{
+    display:grid;
+    grid-template-columns:180px 1fr 52px;
+    align-items:center;
+    gap:12px;
+    padding:8px 0;
+    border-bottom:1px solid #eee8d8;
+  }
+  .shelf-row:last-child{border-bottom:none;}
+  .shelf-name{
+    font-size:13px;
+    color:var(--ink);
+  }
+  .shelf-row.top .shelf-name{font-weight:700;color:var(--pine);}
+  .bar-track{
+    height:10px;
+    background:#eee8d8;
+    position:relative;
+    overflow:hidden;
+  }
+  .bar-fill{
+    height:100%;
+    background:var(--gilt-soft);
+    transition:width 0.5s ease;
+  }
+  .shelf-row.top .bar-fill{background:var(--pine);}
+  .shelf-pct{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    text-align:right;
+    color:#6b6250;
+  }
+  .empty-state{
+    color:#8a8168;
+    font-size:13px;
+    padding:8px 0;
+  }
+  footer{
+    margin-top:40px;
+    font-size:12px;
+    color:#8a8168;
+    line-height:1.8;
+  }
+  footer a{color:var(--pine-soft);}
+</style>
+</head>
+<body>
+<div id="app" class="wrap">
+
+  <header>
+    <div>
+      <p class="eyebrow">国立国会図書館 東京本館 / 専門室振り分けツール</p>
+      <h1>どの専門室に<br>お尋ねになりますか</h1>
+    </div>
+    <div class="catalog-no">jev / System One<br>{{ modelUsed || 'jev-latest' }}</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="card-head"><span class="idx">01</span><h2>利用者の質問</h2></div>
+      <div class="card-body">
+        <div class="row">
+          <label for="question">質問文</label>
+          <textarea id="question" v-model="question" rows="4" maxlength="500" placeholder="例:明治35年頃の東京の住宅地図はありますか"></textarea>
+          <p class="hint">{{ question.length }} / 500文字</p>
+        </div>
+        <button @click="submit" :disabled="loading || !question.trim()">
+          {{ loading ? '判定中…' : '振り分ける' }}
+        </button>
+        <div v-if="errorMsg" class="error-box">{{ errorMsg }}</div>
+      </div>
+    </section>
+
+    <section class="card" v-if="result">
+      <div class="card-head"><span class="idx">02</span><h2>判定結果</h2></div>
+      <div class="card-body">
+
+        <span v-if="result.consultationOnly >= 0.5" class="consult-flag">
+          相談寄り(consultation_only: {{ pct(result.consultationOnly) }})— 総合案内・リサーチ・ナビも検討してください
+        </span>
+
+        <div class="result-top">
+          <div class="result-room">
+            {{ roomLabel(result.room) }}
+            <span class="loc">{{ roomMeta(result.room).loc }}</span>
+          </div>
+          <div class="confidence">
+            <div class="num">{{ pct(result.confidence) }}</div>
+            <div class="lbl">confidence</div>
+          </div>
+        </div>
+
+        <div class="shelf">
+          <div
+            v-for="r in sortedRooms"
+            :key="r.key"
+            class="shelf-row"
+            :class="{ top: r.key === result.room }"
+          >
+            <div class="shelf-name">{{ roomLabel(r.key) }}</div>
+            <div class="bar-track"><div class="bar-fill" :style="{ width: pct(r.prob) }"></div></div>
+            <div class="shelf-pct">{{ pct(r.prob) }}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" v-else>
+      <div class="card-head"><span class="idx">02</span><h2>判定結果</h2></div>
+      <div class="card-body">
+        <p class="empty-state">質問を入力して「振り分ける」を押すと、ここに結果が表示されます。</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    専門室の分類は<a href="https://www.ndl.go.jp/tokyo/reading_info" target="_blank" rel="noopener">国立国会図書館 東京本館「専門室・閲覧室案内」</a>に基づいています。<br>
+    confidence が低い場合は自動確定させず、担当者の確認に回すことをおすすめします。
+  </footer>
+
+</div>
+
+<script>
+const { createApp, ref, computed } = Vue;
+
+// 表示用のラベル・所在階・説明文。実際にjevへ渡すcriteriaは
+// functions/systemone.js 側で管理しているので、両方を変更する場合は
+// キー名(humanities, science_economy, ... )を一致させること。
+const ROOMS = {
+  humanities: {
+    label: "人文総合情報室",
+    loc: "本館2階",
+    desc: "総記・人文科学分野の参考図書類、図書館・図書館情報学関係の主要雑誌に関する質問"
+  },
+  science_economy: {
+    label: "科学技術・経済情報室",
+    loc: "本館2階",
+    desc: "科学技術及び経済社会関係の参考図書、科学技術関係の抄録・索引誌に関する質問"
+  },
+  classics: {
+    label: "古典籍資料室",
+    loc: "本館3階",
+    desc: "貴重書、準貴重書、江戸期以前の和古書、清代以前の漢籍に関する質問"
+  },
+  map: {
+    label: "地図室",
+    loc: "本館4階",
+    desc: "明治以降の一枚ものの地図(地形図、地質図、海図など)、住宅地図に関する質問"
+  },
+  modern_politics: {
+    label: "憲政資料室",
+    loc: "本館4階",
+    desc: "日本近現代政治史料、日本占領関係資料、日系移民関係資料に関する質問"
+  },
+  music_av: {
+    label: "音楽・映像資料室",
+    loc: "新館1階",
+    desc: "録音資料、映像資料、楽譜、電子資料(CD-ROM等)に関する質問"
+  },
+  parliament_gov: {
+    label: "議会官庁資料室",
+    loc: "新館3階",
+    desc: "内外の議会の会議録・議事資料、内外の官公報、法令集、判例集、条約集、内外の官庁の刊行資料目録・要覧・年次報告、統計資料類、政府間国際機関刊行資料、法律・政治分野の参考図書類に関する質問"
+  },
+  newspaper: {
+    label: "新聞資料室",
+    loc: "新館4階",
+    desc: "新聞の原紙、新聞の縮刷版・復刻版、新聞のマイクロフィルム、新聞切抜資料に関する質問"
+  },
+  none: {
+    label: "該当なし",
+    loc: "総合案内・リサーチ・ナビ",
+    desc: "上記のどれにも該当しない、または総合案内・調べ方相談が必要な質問"
+  }
+};
+
+createApp({
+  setup() {
+    const question = ref("");
+    const loading = ref(false);
+    const errorMsg = ref("");
+    const result = ref(null);
+    const modelUsed = ref("");
+
+    // 実際の model / questions の組み立てはサーバー側(functions/systemone.js)で行う。
+    // クライアントは質問文(state)だけを送る。
+    async function submit() {
+      errorMsg.value = "";
+      result.value = null;
+      loading.value = true;
+      try {
+        const res = await fetch("/systemone", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: question.value })
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`サーバーがエラーを返しました(HTTP ${res.status})。${text.slice(0, 200)}`);
+        }
+
+        const data = await res.json();
+        modelUsed.value = data.model || "";
+        const roomAns = data.answers.room;
+        const consultAns = data.answers.consultation_only;
+
+        result.value = {
+          room: roomAns.choice,
+          confidence: roomAns.confidence,
+          probabilities: roomAns.probabilities,
+          consultationOnly: consultAns ? consultAns.noul : 0
+        };
+      } catch (e) {
+        errorMsg.value = e.message || "通信に失敗しました。しばらく待って再度お試しください。";
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    const sortedRooms = computed(() => {
+      if (!result.value) return [];
+      return Object.entries(result.value.probabilities)
+        .map(([key, prob]) => ({ key, prob }))
+        .sort((a, b) => b.prob - a.prob);
+    });
+
+    function roomLabel(key) {
+      return (ROOMS[key] && ROOMS[key].label) || key;
+    }
+    function roomMeta(key) {
+      return ROOMS[key] || { loc: "" };
+    }
+    function pct(v) {
+      return `${Math.round((v || 0) * 100)}%`;
+    }
+
+    return {
+      question, loading, errorMsg, result, modelUsed,
+      sortedRooms, roomLabel, roomMeta, pct, submit
+    };
+  }
+}).mount("#app");
+</script>
+</body>
+</html>

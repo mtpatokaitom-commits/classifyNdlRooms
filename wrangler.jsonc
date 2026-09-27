@@ -24,6 +24,6 @@
   //   wrangler secret put TYPESAFE_API_KEY
   //   wrangler secret put GEMINI_API_KEY
   "vars": {
-    "GEMINI_MODEL": "gemini-2.5-flash"
+    "GEMINI_MODEL": "gemini-2.0-flash"
   }
 }

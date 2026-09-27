@@ -1,9 +1,29 @@
 {
-  "name": "ndl-room-router",
-  "compatibility_date": "2025-01-01",
+  // Cloudflareダッシュボード上でのWorker名。デプロイ先のURL
+  // (<name>.<your-subdomain>.workers.dev)にも使われる。
+  "name": "ndl-jev-routing",
+
+  // Workerのエントリスクリプト。src/worker.jsが
+  // POST /systemone(jev中継)とPOST /handover(Gemini中継)を処理する。
   "main": "src/worker.js",
+
+  // wrangler.jsoncの互換性動作の基準日。新規に発行した日付を入れておけばよい。
+  "compatibility_date": "2026-09-27",
+
+  // 静的アセット(public/配下)の配信設定。
+  // worker.js内の env.ASSETS.fetch(request) はこのbinding名に対応している。
   "assets": {
-    "directory": "./public/",
+    "directory": "public",
     "binding": "ASSETS"
+  },
+
+  // 機密でない環境変数はここに書ける。
+  // GEMINI_MODELは省略可(省略時はworker.js内のGEMINI_MODEL_DEFAULTを使用)。
+  // 逆にTYPESAFE_API_KEYとGEMINI_API_KEYは秘密情報なので、ここには書かず、
+  // 下記コマンドでSecretとして登録すること:
+  //   wrangler secret put TYPESAFE_API_KEY
+  //   wrangler secret put GEMINI_API_KEY
+  "vars": {
+    "GEMINI_MODEL": "gemini-2.5-flash"
   }
 }

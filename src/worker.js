@@ -340,7 +340,10 @@ async function handleSystemOne(request, env) {
   });
 
   if (!upstream.ok) {
-    // upstreamのエラー詳細はそのまま外に出さず、汎用メッセージに変換する
+    // upstreamのエラー詳細はそのまま外に出さず、汎用メッセージに変換する。
+    // 原因調査用にステータスと本文はログへ(wrangler tailで見える)。
+    const errBody = await upstream.text().catch(() => "(本文取得失敗)");
+    console.error(`jev API error: status=${upstream.status} body=${errBody}`);
     const status = upstream.status >= 500 ? 502 : upstream.status;
     return jsonError("jevの呼び出しに失敗しました。", status);
   }
@@ -443,6 +446,10 @@ ${state}
   );
 
   if (!upstream.ok) {
+    // 利用者には詳細を出さないが、開発時に原因を特定できるよう
+    // ステータスと本文をWorkerのログに残す(wrangler tailで見える)。
+    const errBody = await upstream.text().catch(() => "(本文取得失敗)");
+    console.error(`Gemini API error: status=${upstream.status} body=${errBody}`);
     const status = upstream.status >= 500 ? 502 : upstream.status;
     return jsonError("Gemini APIの呼び出しに失敗しました。", status);
   }

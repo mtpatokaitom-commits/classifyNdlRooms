@@ -15,6 +15,22 @@
 └── README.md
 ```
 
+## セキュリティ上の注意
+
+- **`/systemone`・`/handover`はどちらも認証なしで呼び出せます。** 特に`/handover`は
+  利用者が入力した文章(`state`)をそのままGeminiへのプロンプトに埋め込むため、
+  第三者が直接叩けば実質的に無認証のAPI中継として使われてしまいます。公開前に、
+  Cloudflareの[Rate Limiting Rules](https://developers.cloudflare.com/waf/rate-limiting-rules/)
+  や[Turnstile](https://developers.cloudflare.com/turnstile/)などで、同一IP・
+  同一セッションからの過度な呼び出しを制限することを強く推奨します。
+- `/handover`のプロンプトには、ヒアリング記録内の指示文めいた記述に従わないよう
+  防御的な一文を入れていますが、プロンプトインジェクションを完全には防げません。
+  生成された引継ぎ文書は「参考情報」として扱い、職員が内容を鵜呑みにせず確認する
+  運用にしてください。
+- `public/index.html`はVueをCDN(unpkg)から読み込んでいます。SRI(整合性ハッシュ)
+  は付けていないため、より厳格にするならバージョンを固定した上でSRIを付与するか、
+  Vue本体を`public/`配下に同梱してCDN依存を無くすことを検討してください。
+
 ## 全体の流れ
 
 1. 利用者が`public/index.html`で最初の相談内容を入力する。

@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+
+# ローカル開発用の秘密情報(wrangler devで使う)。本番のSecretはwranglerで管理する
+.dev.vars
+.env
+
+# OS/エディタ生成物
+.DS_Store

@@ -1,60 +1,139 @@
-# NDL 専門室振り分けツール
+# NDL専門室振り分けインタビュー
 
-国立国会図書館 東京本館の「専門室・閲覧室案内」に基づき、利用者の質問文から最も適した専門室を判定するWebツールです。判定には [TypeSafe](https://typesafe.ai) の System One モデル「jev」を使用しています。
-
-Cloudflare Workers(静的アセット付き)上で動作します。静的な `public/index.html`(Vue 3をCDN読み込み)と、jevへのリクエストを中継するWorkerスクリプト `src/worker.js` で構成されています。
+利用者の相談内容から、国立国会図書館 東京本館の専門室(または総合案内)へ
+自動で振り分けるためのCloudflare Workerとフロントエンドです。
 
 ## 構成
 
 ```
 .
 ├── public/
-│   └── index.html        静的ページ(Vue 3)。利用者はここで質問文を入力する
+│   └── index.html   静的ページ(Vue 3、CDN読み込み)。利用者はここで相談内容を入力する
 ├── src/
-│   └── worker.js          Workerスクリプト。静的ファイルの配信と /systemone の中継を行う
-├── wrangler.jsonc          Cloudflare Workerの設定(静的アセットのディレクトリ・エントリスクリプトを指定)
+│   └── worker.js     Workerスクリプト。静的ファイルの配信、/systemone、/handoverの中継を行う
+├── wrangler.jsonc    Cloudflare Workerの設定
 └── README.md
 ```
 
-`public/index.html` は `/systemone` に質問文(`state`)だけをPOSTします。`src/worker.js` がリクエストを見て、`/systemone` 宛てならjevへの中継処理を行い、それ以外は `env.ASSETS` を通じて `public/` 配下の静的ファイルを返します。TypeSafeのAPIキーはWorkerの環境変数(Secret)としてのみ保持し、ブラウザには一切渡りません。
+## 全体の流れ
 
-## なぜこの構成か(Pages Functionsからの変更点)
+1. 利用者が`public/index.html`で最初の相談内容を入力する。
+2. フロントエンドが`POST /systemone`を呼び出す。`src/worker.js`がjev(typesafe.ai)
+   に中継し、現時点で最も近い専門室(`room`)と、次に聞くべき質問(`next_question`)
+   を判定する。
+3. `room`の確信度(`confidence`)が十分でなければ、`next_question`の質問文を
+   利用者に提示して回答してもらい、これまでの対話を積み上げてもう一度2に戻る。
+   - 用意している質問候補を全て聞き終えるか、規定のターン数に達しても確信度が
+     十分にならない場合は、`final_room`が`"information"`(総合案内)になる。
+4. 確信度が十分になったら(`sufficient: true`)、`POST /handover`を呼び出し、
+   Gemini APIにこれまでの対話記録を渡して、担当職員への引継ぎ文書を生成する。
+5. フロントエンドは案内先の室名と引継ぎ文書を利用者に表示する。
 
-以前は Cloudflare Pages + Pages Functions(`functions/systemone.js`)構成でしたが、CloudflareダッシュボードでGitHub連携時にプロジェクトが「静的アセットのみのWorker」として作成され、そのままでは環境変数(Secret)を追加できない状態になりました。これはCloudflareがPagesと従来のWorkersを「Workers with static assets」という1つの仕組みに統合したためで、現在は `wrangler.jsonc` で静的アセットのディレクトリとWorkerスクリプトを明示的に組み合わせる方式が標準です。この構成ではその方式に合わせています。
+`src/worker.js`冒頭のコメントに、より詳細な設計意図とAPIのリクエスト/レスポンス
+形式を記載している。
 
-## セキュリティについて
+## セットアップ
 
-- **APIキー**: `TYPESAFE_API_KEY` はCloudflareのSecret(暗号化された環境変数)としてのみ保持し、リポジトリにもクライアントにも含めません。
-- **クライアントが送れるのは質問文だけ**: `model` や `questions`(jevへの実際の指示内容)はすべて `src/worker.js` 側で固定しています。クライアントから任意のモデルや質問を指定してAPI利用枠を消費される、という経路を塞ぐためです。
-- **文字数制限**: 質問文は500文字までに制限しています(サーバー側で強制)。
-- **認証なしで公開される点に注意**: `/systemone` エンドポイント自体には利用者認証がないため、URLを知っていれば誰でも呼び出せます。公開範囲を絞りたい場合は、Cloudflare Turnstile(無料のbot対策)の導入や、Cloudflareのレート制限ルールを追加することを検討してください。
+### 前提
 
-## デプロイ手順(Cloudflare Workers)
+- Node.js がインストールされていること
+- Cloudflareアカウントを持っていること
+- [typesafe.ai](https://docs.typesafe.ai)のAPIキー(jev利用)
+- [Google AI Studio](https://ai.google.dev)で発行したGemini APIキー
 
-1. このリポジトリをGitHubにpushします(`functions/` フォルダが残っている場合は削除してください)
-2. [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → 「Import an existing Git repository」からこのリポジトリを選択します
-3. `wrangler.jsonc` が検出され、静的アセット付きWorkerとしてデプロイされます
-4. デプロイ後、対象Workerの **Settings → Variables and Secrets** で `TYPESAFE_API_KEY` を **Secret** として登録します(Textではなく必ずSecretを選択してください)
-5. 以降、`main`(または設定したブランチ)にpushするたびに自動で再デプロイされます
+### 手順
 
-既存のプロジェクトが「静的アセットのみ」のまま変更を反映しない場合は、一度プロジェクトを削除して、`wrangler.jsonc` を含む状態のリポジトリから再度Importし直すと確実です。
+```bash
+# wranglerをインストール(未導入の場合)
+npm install -g wrangler
 
-## 判定ロジック
+# Cloudflareにログイン
+wrangler login
 
-jev の `questions` として以下2つを1回のリクエストで並列評価しています。
+# 秘密情報をSecretとして登録(値は対話的に入力する)
+wrangler secret put TYPESAFE_API_KEY
+wrangler secret put GEMINI_API_KEY
 
-- `room`(Choice): 質問文に最も適した専門室を、各室の資料範囲を説明した `criteria` から選択
-  - 人文総合情報室 / 科学技術・経済情報室 / 古典籍資料室 / 地図室 / 憲政資料室 / 音楽・映像資料室 / 議会官庁資料室 / 新聞資料室 / 該当なし
-- `consultation_only`(Noul): 利用者が特定の資料ではなく調べ方の相談をしているかどうか
+# ローカルで動作確認
+wrangler dev
 
-専門室の分類・資料範囲の説明文は、[国立国会図書館「専門室・閲覧室案内」](https://www.ndl.go.jp/tokyo/reading_info)の記載に基づいています。表示用ラベル(`public/index.html` 内の `ROOMS`)と、jevに渡す判定基準(`src/worker.js` 内の `ROOM_CRITERIA`)は同じキー名で対応させているので、専門室を追加・変更する場合は両方を更新してください。
+# デプロイ
+wrangler deploy
+```
 
-## 注意事項
+`wrangler secret put`で登録した値は、Cloudflareダッシュボードの
+「対象Worker → Settings → Variables and Secrets」でも確認・変更できる
+(表示は隠されるが、値自体はここで管理されている)。平文の環境変数(Text)
+ではなく必ず"Secret"として登録すること。
 
-- 本ツールは国立国会図書館の公式サービスではありません
-- jevの判定結果は参考情報です。特に confidence が低い場合や、古典籍資料室・憲政資料室など許可申請が必要な資料に関わる場合は、必ず[国立国会図書館の公式案内](https://www.ndl.go.jp/tokyo/reading_info)や窓口で確認してください
-- 各専門室の開室時間・利用条件は変更される場合があるため、最新情報は公式サイトをご確認ください
+## 主な設定値(src/worker.js)
 
-## ライセンス
+用途に応じて、コード冒頭付近の以下の定数を調整する。
 
-未定(必要に応じて追記してください)
+| 定数 | 内容 | 初期値 |
+|---|---|---|
+| `MAX_STATE_LENGTH` | 対話全文の文字数上限 | 4000 |
+| `ROOM_CONFIDENCE_THRESHOLD` | この確信度以上でroomの判定を確定させる | 0.65 |
+| `MAX_TURNS` | 質問を打ち切るまでの最大ターン数 | 5 |
+| `GEMINI_MODEL_DEFAULT` | `GEMINI_MODEL`環境変数が未設定の場合に使うモデル名 | `gemini-2.5-flash` |
+| `ROOM_CRITERIA` | 各専門室の判定基準(jevに渡す説明文) | - |
+| `ROOM_LABELS` | 引継ぎ文書に載せる室の表示名 | - |
+| `CANDIDATE_QUESTIONS` | 次に聞く質問の候補プール | - |
+
+**`ROOM_LABELS`は仮の室名です。** 実際のNDL東京本館の室名と異なる場合がある
+ため、運用開始前に必ず確認・修正してください。
+
+`GEMINI_MODEL`はwrangler.jsoncの`vars`、またはCloudflareダッシュボードの
+環境変数から上書きできる(Secretではなく通常の環境変数でよい)。Geminiの
+モデル名は更新頻度が高いため、最新の推奨モデルは
+https://ai.google.dev/gemini-api/docs を確認すること。
+
+## API仕様
+
+### `POST /systemone`
+
+リクエスト:
+
+```json
+{
+  "state": "利用者の相談文 + これまでの質問と回答の履歴(全文)",
+  "asked_questions": ["subject_area", "time_period"]
+}
+```
+
+レスポンス(例):
+
+```json
+{
+  "answers": {
+    "room": { "choice": "map", "confidence": 0.42, "probabilities": { "...": 0.0 } },
+    "next_question": { "choice": "material_format", "text": "探している資料の形式は..." }
+  },
+  "sufficient": false,
+  "final_room": null
+}
+```
+
+`sufficient: true`のとき、`final_room`(専門室のid、または`"information"`)を
+案内先として採用する。
+
+### `POST /handover`
+
+リクエスト:
+
+```json
+{
+  "state": "/systemoneに渡していた対話全文",
+  "final_room": "map"
+}
+```
+
+レスポンス:
+
+```json
+{
+  "room": "map",
+  "room_label": "地図室",
+  "document": "職員への引継ぎ文書(テキスト)"
+}
+```

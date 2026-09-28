@@ -1,7 +1,7 @@
 {
   // Cloudflareダッシュボード上でのWorker名。デプロイ先のURL
   // (<name>.<your-subdomain>.workers.dev)にも使われる。
-  "name": "classifyndlrooms",
+  "name": "ndl-jev-routing",
 
   // Workerのエントリスクリプト。src/worker.jsが
   // POST /systemone(jev中継)とPOST /handover(Gemini中継)を処理する。
@@ -24,6 +24,6 @@
   //   wrangler secret put TYPESAFE_API_KEY
   //   wrangler secret put GEMINI_API_KEY
   "vars": {
-    "GEMINI_MODEL": "gemini-2.0-flash"
+    "GEMINI_MODEL": "gemini-flash-latest"
   }
 }

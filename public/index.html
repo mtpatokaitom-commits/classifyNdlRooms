@@ -93,20 +93,91 @@
   .error {
     color: #b00020;
   }
+
+  /* 専門室選択UI用スタイル */
+  .candidate-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 16px 0 20px;
+  }
+  .candidate-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .candidate-item:hover {
+    background: #f9f9f9;
+  }
+  .candidate-item.selected {
+    border-color: #2c5f8a;
+    background: #f0f6fa;
+  }
+  .candidate-item input[type="radio"] {
+    margin-top: 4px;
+  }
+  .candidate-info {
+    flex: 1;
+  }
+  .candidate-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .candidate-label {
+    font-weight: bold;
+    color: #2c5f8a;
+    font-size: 1.05rem;
+  }
+  .badge-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .recommended-badge {
+    font-size: 0.75rem;
+    background: #e67e22;
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+  }
+  .candidate-confidence {
+    font-size: 0.85rem;
+    background: #e0e0e0;
+    color: #333;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: bold;
+  }
+  .candidate-desc {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #555;
+    line-height: 1.45;
+  }
 </style>
 </head>
 <body>
 <div id="app">
   <h1>国立国会図書館 レファレンス相談</h1>
 
+  <!-- 1. 初期入力画面 -->
   <div class="card" v-if="phase === 'intro'">
     <p class="question-text">お探しの資料や、お調べになりたい内容を入力してください。</p>
-    <textarea v-model="initialQuestion" placeholder="例:明治期の東京の地形図を探しています"></textarea>
+    <textarea v-model="initialQuestion" placeholder="例: 明治期の東京の地形図を探しています" @keydown.ctrl.enter="start" @keydown.cmd.enter="start"></textarea>
     <div>
       <button @click="start" :disabled="!initialQuestion.trim()">相談を始める</button>
     </div>
   </div>
 
+  <!-- 2. ヒアリング質問画面 -->
   <div class="card" v-else-if="phase === 'asking'">
     <div class="history" v-if="turns.length">
       <div class="turn" v-for="(t, i) in turns" :key="i">
@@ -115,16 +186,48 @@
       </div>
     </div>
     <p class="question-text">{{ currentQuestion }}</p>
-    <textarea v-model="currentAnswer" placeholder="回答を入力してください"></textarea>
+    <textarea v-model="currentAnswer" placeholder="回答を入力してください (Ctrl + Enter で送信)" @keydown.ctrl.enter="submitAnswer" @keydown.cmd.enter="submitAnswer"></textarea>
     <div>
       <button @click="submitAnswer" :disabled="!currentAnswer.trim()">回答する</button>
     </div>
   </div>
 
+  <!-- 3. 通信中画面 -->
   <div class="card loading" v-else-if="phase === 'loading'">
     確認しています…
   </div>
 
+  <!-- 4. 専門室選択画面 (ヒアリング完了時) -->
+  <div class="card" v-else-if="phase === 'select_room'">
+    <p class="question-text">ヒアリングが完了しました。最も適していると思われる案内先を選択してください。</p>
+
+    <div class="candidate-list">
+      <label 
+        v-for="candidate in roomCandidates" 
+        :key="candidate.id" 
+        class="candidate-item"
+        :class="{ selected: selectedRoomId === candidate.id }"
+      >
+        <input type="radio" name="room" :value="candidate.id" v-model="selectedRoomId" />
+        <div class="candidate-info">
+          <div class="candidate-header">
+            <span class="candidate-label">{{ candidate.label }}</span>
+            <div class="badge-group">
+              <span class="recommended-badge" v-if="candidate.id === recommendedRoomId">推奨</span>
+              <span class="candidate-confidence">適合度: {{ candidate.confidence }}%</span>
+            </div>
+          </div>
+          <p class="candidate-desc">{{ candidate.description }}</p>
+        </div>
+      </label>
+    </div>
+
+    <div>
+      <button @click="confirmRoom" :disabled="!selectedRoomId">この案内先で確定する</button>
+    </div>
+  </div>
+
+  <!-- 5. 確定結果・引継ぎ書表示画面 -->
   <div class="card" v-else-if="phase === 'result'">
     <div class="room-label">ご案内先: {{ roomLabel }}</div>
     <div class="document">{{ document }}</div>
@@ -133,6 +236,7 @@
     </div>
   </div>
 
+  <!-- 6. エラー表示画面 -->
   <div class="card error" v-else-if="phase === 'error'">
     <p>{{ errorMessage }}</p>
     <button class="secondary" @click="reset">最初からやり直す</button>
@@ -144,7 +248,7 @@ const { createApp, ref } = Vue;
 
 createApp({
   setup() {
-    // phase: intro -> loading -> asking -> loading -> ... -> result / error
+    // phase: intro -> loading -> asking -> loading -> select_room -> loading -> result / error
     const phase = ref("intro");
     const initialQuestion = ref("");
     const state = ref("");
@@ -153,6 +257,12 @@ createApp({
     const currentQuestion = ref("");
     const currentQuestionId = ref("");
     const currentAnswer = ref("");
+    
+    // 候補選択用
+    const roomCandidates = ref([]);
+    const selectedRoomId = ref("");
+    const recommendedRoomId = ref("");
+
     const roomLabel = ref("");
     const documentText = ref("");
     const errorMessage = ref("");
@@ -179,13 +289,11 @@ createApp({
         });
 
         if (data.sufficient) {
-          const handover = await postJson("/handover", {
-            state: state.value,
-            final_room: data.final_room
-          });
-          roomLabel.value = handover.room_label;
-          documentText.value = handover.document;
-          phase.value = "result";
+          // ヒアリング完了時: 候補リストを保持し選択画面へ移行
+          roomCandidates.value = data.room_candidates || [];
+          recommendedRoomId.value = data.final_room || (roomCandidates.value[0] && roomCandidates.value[0].id) || "";
+          selectedRoomId.value = recommendedRoomId.value;
+          phase.value = "select_room";
           return;
         }
 
@@ -203,7 +311,25 @@ createApp({
       }
     }
 
+    async function confirmRoom() {
+      if (!selectedRoomId.value) return;
+      phase.value = "loading";
+      try {
+        const handover = await postJson("/handover", {
+          state: state.value,
+          final_room: selectedRoomId.value
+        });
+        roomLabel.value = handover.room_label;
+        documentText.value = handover.document;
+        phase.value = "result";
+      } catch (err) {
+        errorMessage.value = err.message || "引継ぎ文書の生成に失敗しました。";
+        phase.value = "error";
+      }
+    }
+
     function start() {
+      if (!initialQuestion.value.trim()) return;
       state.value = initialQuestion.value.trim();
       askedIds.value = [];
       turns.value = [];
@@ -211,6 +337,7 @@ createApp({
     }
 
     function submitAnswer() {
+      if (!currentAnswer.value.trim()) return;
       const answer = currentAnswer.value.trim();
       state.value += `\nQ: ${currentQuestion.value}\nA: ${answer}`;
       turns.value.push({ question: currentQuestion.value, answer });
@@ -224,6 +351,9 @@ createApp({
       state.value = "";
       askedIds.value = [];
       turns.value = [];
+      roomCandidates.value = [];
+      selectedRoomId.value = "";
+      recommendedRoomId.value = "";
       roomLabel.value = "";
       documentText.value = "";
       errorMessage.value = "";
@@ -235,11 +365,15 @@ createApp({
       turns,
       currentQuestion,
       currentAnswer,
+      roomCandidates,
+      selectedRoomId,
+      recommendedRoomId,
       roomLabel,
       document: documentText,
       errorMessage,
       start,
       submitAnswer,
+      confirmRoom,
       reset
     };
   }

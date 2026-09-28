@@ -3,181 +3,372 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>レファレンス相談 - 専門室振り分け</title>
+<title>国立国会図書館 レファレンス案内</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/vue@3.4.31/dist/vue.global.prod.js"></script>
 <style>
   :root {
-    color-scheme: light;
-    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    --bg-main: #f4efe6;          /* 羊皮紙風の背景色 */
+    --card-bg: #fcfbfa;          /* カード背景 */
+    --primary: #1b2a3a;          /* 濃紺（書庫・アカデミック） */
+    --accent: #a37e38;           /* アンティークゴールド */
+    --accent-hover: #886526;
+    --text-main: #2b2723;        /* 墨色 */
+    --text-sub: #5c554e;
+    --border-color: #d8cebe;
+    --border-dark: #b5a48b;
+    --serif-font: "Shippori Mincho", "Yu Mincho", "Hiragino Mincho ProN", Georgia, serif;
+    --sans-font: "Hiragino Sans", "Yu Gothic", sans-serif;
   }
+
   body {
     margin: 0;
-    background: #f5f5f3;
-    color: #222;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: var(--sans-font);
+    background-image: radial-gradient(#e5dcd0 1px, transparent 1px);
+    background-size: 20px 20px;
   }
+
   #app {
-    max-width: 640px;
+    max-width: 680px;
     margin: 0 auto;
-    padding: 32px 20px 80px;
+    padding: 40px 20px 80px;
   }
+
+  .header-container {
+    text-align: center;
+    margin-bottom: 32px;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 16px;
+  }
+
   h1 {
-    font-size: 1.25rem;
-    margin-bottom: 24px;
+    font-family: var(--serif-font);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    margin: 0 0 6px 0;
+    letter-spacing: 0.08em;
   }
+
+  .header-sub {
+    font-size: 0.85rem;
+    color: var(--text-sub);
+    letter-spacing: 0.05em;
+  }
+
   .card {
-    background: #fff;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 20px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 12px rgba(27, 42, 58, 0.05);
+    border-radius: 4px;
+    padding: 28px 24px;
+    position: relative;
   }
+
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 3px; left: 3px; right: 3px; bottom: 3px;
+    border: 1px solid var(--border-color);
+    pointer-events: none;
+  }
+
+  .question-text {
+    font-family: var(--serif-font);
+    font-size: 1.15rem;
+    color: var(--primary);
+    line-height: 1.6;
+    margin-bottom: 16px;
+    font-weight: 700;
+  }
+
+  .input-wrapper {
+    position: relative;
+    margin-bottom: 16px;
+  }
+
   textarea {
     width: 100%;
     box-sizing: border-box;
-    min-height: 100px;
-    padding: 10px;
-    font-size: 1rem;
-    border: 1px solid #ccc;
-    border-radius: 6px;
+    min-height: 110px;
+    padding: 12px 40px 12px 12px;
+    font-size: 0.98rem;
+    color: var(--text-main);
+    background: #fff;
+    border: 1px solid var(--border-dark);
+    border-radius: 2px;
     resize: vertical;
+    font-family: var(--sans-font);
+    line-height: 1.5;
   }
-  button {
-    margin-top: 12px;
-    padding: 10px 20px;
-    font-size: 1rem;
+
+  textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(163, 126, 56, 0.2);
+  }
+
+  /* 音声操作コントローラー */
+  .voice-btn-inline {
+    position: absolute;
+    right: 8px;
+    bottom: 12px;
+    background: transparent;
     border: none;
-    border-radius: 6px;
-    background: #2c5f8a;
-    color: #fff;
     cursor: pointer;
+    font-size: 1.2rem;
+    padding: 4px 8px;
+    border-radius: 50%;
+    transition: transform 0.2s;
   }
-  button:disabled {
-    background: #aaa;
+
+  .voice-btn-inline:hover {
+    transform: scale(1.15);
+  }
+
+  .voice-btn-inline.listening {
+    animation: pulse 1.2s infinite;
+    color: #c0392b;
+  }
+
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.25); }
+    100% { transform: scale(1); }
+  }
+
+  .audio-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .speech-btn {
+    background: #f0e8dc;
+    border: 1px solid var(--border-dark);
+    color: var(--primary);
+    padding: 4px 12px;
+    font-size: 0.82rem;
+    border-radius: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .speech-btn:hover {
+    background: #e5dac8;
+  }
+
+  /* ボタン */
+  .btn-group {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  button.primary {
+    background: var(--primary);
+    color: #fff;
+    border: 1px solid var(--primary);
+    padding: 10px 24px;
+    font-size: 0.95rem;
+    font-family: var(--serif-font);
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background 0.2s;
+  }
+
+  button.primary:hover:not(:disabled) {
+    background: #2a3e54;
+  }
+
+  button.primary:disabled {
+    background: #9ca6b0;
+    border-color: #9ca6b0;
     cursor: not-allowed;
   }
+
   button.secondary {
-    background: #888;
-  }
-  .question-text {
-    font-size: 1.05rem;
-    margin-bottom: 12px;
-  }
-  .loading {
-    text-align: center;
-    color: #666;
-    padding: 40px 0;
-  }
-  .history {
-    margin-bottom: 20px;
+    background: transparent;
+    color: var(--text-sub);
+    border: 1px solid var(--border-dark);
+    padding: 10px 20px;
     font-size: 0.9rem;
-    color: #555;
+    cursor: pointer;
   }
+
+  button.secondary:hover {
+    background: #eae2d5;
+  }
+
+  /* 対話履歴 */
+  .history {
+    margin-bottom: 24px;
+    background: #f5f0e8;
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    font-size: 0.88rem;
+  }
+
   .history .turn {
     margin-bottom: 8px;
     padding-bottom: 8px;
-    border-bottom: 1px dashed #ddd;
-  }
-  .room-label {
-    font-size: 1.3rem;
-    font-weight: bold;
-    color: #2c5f8a;
-    margin-bottom: 16px;
-  }
-  .document {
-    white-space: pre-wrap;
-    background: #fafafa;
-    border: 1px solid #eee;
-    border-radius: 6px;
-    padding: 16px;
-    line-height: 1.6;
-  }
-  .error {
-    color: #b00020;
+    border-bottom: 1px dashed var(--border-color);
   }
 
-  /* 専門室選択UI用スタイル */
+  .history .turn:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  /* 専門室候補リスト */
   .candidate-list {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    margin: 16px 0 20px;
+    margin: 20px 0;
   }
+
   .candidate-item {
     display: flex;
     align-items: flex-start;
     gap: 12px;
-    padding: 14px;
-    border: 1px solid #ddd;
-    border-radius: 8px;
+    padding: 16px;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 2px;
     cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
+    transition: all 0.2s;
   }
+
   .candidate-item:hover {
-    background: #f9f9f9;
+    border-color: var(--accent);
+    background: #faf7f2;
   }
+
   .candidate-item.selected {
-    border-color: #2c5f8a;
-    background: #f0f6fa;
+    border-color: var(--accent);
+    background: #f7f2ea;
+    box-shadow: inset 3px 0 0 var(--accent);
   }
-  .candidate-item input[type="radio"] {
-    margin-top: 4px;
-  }
+
   .candidate-info {
     flex: 1;
   }
+
   .candidate-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 6px;
   }
+
   .candidate-label {
-    font-weight: bold;
-    color: #2c5f8a;
+    font-family: var(--serif-font);
+    font-weight: 700;
+    color: var(--primary);
     font-size: 1.05rem;
   }
+
   .badge-group {
     display: flex;
     gap: 6px;
     align-items: center;
   }
+
   .recommended-badge {
-    font-size: 0.75rem;
-    background: #e67e22;
+    font-size: 0.72rem;
+    background: var(--accent);
     color: #fff;
     padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: bold;
+    border-radius: 2px;
   }
+
   .candidate-confidence {
-    font-size: 0.85rem;
-    background: #e0e0e0;
-    color: #333;
+    font-size: 0.8rem;
+    background: #eae2d5;
+    color: var(--text-main);
     padding: 2px 8px;
-    border-radius: 12px;
+    border-radius: 10px;
     font-weight: bold;
   }
+
   .candidate-desc {
     margin: 0;
     font-size: 0.85rem;
-    color: #555;
-    line-height: 1.45;
+    color: var(--text-sub);
+    line-height: 1.5;
+  }
+
+  /* 結果表示 */
+  .room-label-box {
+    font-family: var(--serif-font);
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary);
+    border-bottom: 1px solid var(--accent);
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+  }
+
+  .document {
+    white-space: pre-wrap;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    padding: 20px;
+    line-height: 1.7;
+    font-size: 0.92rem;
+  }
+
+  .loading {
+    text-align: center;
+    color: var(--text-sub);
+    padding: 40px 0;
+    font-family: var(--serif-font);
+  }
+
+  .error {
+    color: #8b0000;
   }
 </style>
 </head>
 <body>
 <div id="app">
-  <h1>国立国会図書館 レファレンス相談</h1>
+  <div class="header-container">
+    <h1>国立国会図書館 東京本館</h1>
+    <div class="header-sub">レファレンス相談・専門室自動案内カウンター</div>
+  </div>
 
-  <!-- 1. 初期入力画面 -->
   <div class="card" v-if="phase === 'intro'">
-    <p class="question-text">お探しの資料や、お調べになりたい内容を入力してください。</p>
-    <textarea v-model="initialQuestion" placeholder="例: 明治期の東京の地形図を探しています" @keydown.ctrl.enter="start" @keydown.cmd.enter="start"></textarea>
-    <div>
-      <button @click="start" :disabled="!initialQuestion.trim()">相談を始める</button>
+    <p class="question-text">お調べになりたいテーマや、探している資料についてご記入ください。</p>
+    <div class="input-wrapper">
+      <textarea 
+        v-model="initialQuestion" 
+        placeholder="例: 明治期の東京における地形図や住宅地図を探しています"
+        @keydown.ctrl.enter="start" 
+        @keydown.cmd.enter="start"
+      ></textarea>
+      <button 
+        class="voice-btn-inline" 
+        :class="{ listening: isListening }" 
+        @click="toggleVoiceInput('initial')"
+        :title="isListening ? '音声認識を停止' : '音声で入力する'"
+      >🎤</button>
+    </div>
+    <div class="btn-group">
+      <button class="primary" @click="start" :disabled="!initialQuestion.trim()">相談を開始する</button>
     </div>
   </div>
 
-  <!-- 2. ヒアリング質問画面 -->
   <div class="card" v-else-if="phase === 'asking'">
     <div class="history" v-if="turns.length">
       <div class="turn" v-for="(t, i) in turns" :key="i">
@@ -185,21 +376,40 @@
         <strong>A:</strong> {{ t.answer }}
       </div>
     </div>
-    <p class="question-text">{{ currentQuestion }}</p>
-    <textarea v-model="currentAnswer" placeholder="回答を入力してください (Ctrl + Enter で送信)" @keydown.ctrl.enter="submitAnswer" @keydown.cmd.enter="submitAnswer"></textarea>
-    <div>
-      <button @click="submitAnswer" :disabled="!currentAnswer.trim()">回答する</button>
+    
+    <div class="audio-bar">
+      <p class="question-text" style="margin: 0; flex: 1;">{{ currentQuestion }}</p>
+      <button class="speech-btn" @click="speak(currentQuestion)">🔊 読み上げ</button>
+    </div>
+
+    <div class="input-wrapper">
+      <textarea 
+        v-model="currentAnswer" 
+        placeholder="回答をご記入ください (Ctrl + Enter で送信)" 
+        @keydown.ctrl.enter="submitAnswer" 
+        @keydown.cmd.enter="submitAnswer"
+      ></textarea>
+      <button 
+        class="voice-btn-inline" 
+        :class="{ listening: isListening }" 
+        @click="toggleVoiceInput('answer')"
+        :title="isListening ? '音声認識を停止' : '音声で入力する'"
+      >🎤</button>
+    </div>
+    <div class="btn-group">
+      <button class="primary" @click="submitAnswer" :disabled="!currentAnswer.trim()">回答を送信する</button>
     </div>
   </div>
 
-  <!-- 3. 通信中画面 -->
   <div class="card loading" v-else-if="phase === 'loading'">
-    確認しています…
+    資料データベース及び案内基準を照合しております…
   </div>
 
-  <!-- 4. 専門室選択画面 (ヒアリング完了時) -->
   <div class="card" v-else-if="phase === 'select_room'">
-    <p class="question-text">ヒアリングが完了しました。最も適していると思われる案内先を選択してください。</p>
+    <div class="audio-bar">
+      <p class="question-text" style="margin: 0; flex: 1;">ヒアリングが完了しました。ご案内先を選択してください。</p>
+      <button class="speech-btn" @click="speak('ヒアリングが完了しました。最も適していると思われる案内先を選択してください。')">🔊 読み上げ</button>
+    </div>
 
     <div class="candidate-list">
       <label 
@@ -208,13 +418,13 @@
         class="candidate-item"
         :class="{ selected: selectedRoomId === candidate.id }"
       >
-        <input type="radio" name="room" :value="candidate.id" v-model="selectedRoomId" />
+        <input type="radio" name="room" :value="candidate.id" v-model="selectedRoomId" style="margin-top: 4px;" />
         <div class="candidate-info">
           <div class="candidate-header">
             <span class="candidate-label">{{ candidate.label }}</span>
             <div class="badge-group">
               <span class="recommended-badge" v-if="candidate.id === recommendedRoomId">推奨</span>
-              <span class="candidate-confidence">適合度: {{ candidate.confidence }}%</span>
+              <span class="candidate-confidence">適合度 {{ candidate.confidence }}%</span>
             </div>
           </div>
           <p class="candidate-desc">{{ candidate.description }}</p>
@@ -222,24 +432,27 @@
       </label>
     </div>
 
-    <div>
-      <button @click="confirmRoom" :disabled="!selectedRoomId">この案内先で確定する</button>
+    <div class="btn-group">
+      <button class="primary" @click="confirmRoom" :disabled="!selectedRoomId">この窓口に決定する</button>
     </div>
   </div>
 
-  <!-- 5. 確定結果・引継ぎ書表示画面 -->
   <div class="card" v-else-if="phase === 'result'">
-    <div class="room-label">ご案内先: {{ roomLabel }}</div>
-    <div class="document">{{ document }}</div>
-    <div>
-      <button class="secondary" @click="reset">別の相談を始める</button>
+    <div class="room-label-box">ご案内窓口: {{ roomLabel }}</div>
+    <div class="audio-bar" style="justify-content: flex-end;">
+      <button class="speech-btn" @click="speak(documentText)">🔊 引継ぎ事項を読み上げ</button>
+    </div>
+    <div class="document">{{ documentText }}</div>
+    <div class="btn-group">
+      <button class="secondary" @click="reset">新しい相談を開始する</button>
     </div>
   </div>
 
-  <!-- 6. エラー表示画面 -->
   <div class="card error" v-else-if="phase === 'error'">
     <p>{{ errorMessage }}</p>
-    <button class="secondary" @click="reset">最初からやり直す</button>
+    <div class="btn-group">
+      <button class="secondary" @click="reset">最初の画面へ戻る</button>
+    </div>
   </div>
 </div>
 
@@ -248,17 +461,15 @@ const { createApp, ref } = Vue;
 
 createApp({
   setup() {
-    // phase: intro -> loading -> asking -> loading -> select_room -> loading -> result / error
     const phase = ref("intro");
     const initialQuestion = ref("");
     const state = ref("");
     const askedIds = ref([]);
-    const turns = ref([]); // 画面表示用の質問回答履歴
+    const turns = ref([]);
     const currentQuestion = ref("");
     const currentQuestionId = ref("");
     const currentAnswer = ref("");
     
-    // 候補選択用
     const roomCandidates = ref([]);
     const selectedRoomId = ref("");
     const recommendedRoomId = ref("");
@@ -266,6 +477,66 @@ createApp({
     const roomLabel = ref("");
     const documentText = ref("");
     const errorMessage = ref("");
+
+    // 音声認識・合成の状態管理
+    const isListening = ref(false);
+    let recognition = null;
+
+    // Web Speech API (音声認識) の初期化
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'ja-JP';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+    }
+
+    function toggleVoiceInput(targetField) {
+      if (!recognition) {
+        alert("お使いのブラウザは音声入力に対応していません。");
+        return;
+      }
+
+      if (isListening.value) {
+        recognition.stop();
+        isListening.value = false;
+        return;
+      }
+
+      isListening.value = true;
+      recognition.start();
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        if (targetField === 'initial') {
+          initialQuestion.value = (initialQuestion.value + ' ' + transcript).trim();
+        } else if (targetField === 'answer') {
+          currentAnswer.value = (currentAnswer.value + ' ' + transcript).trim();
+        }
+        isListening.value = false;
+      };
+
+      recognition.onerror = () => {
+        isListening.value = false;
+      };
+
+      recognition.onend = () => {
+        isListening.value = false;
+      };
+    }
+
+    // Web Speech API (音声読み上げ)
+    function speak(text) {
+      if (!('speechSynthesis' in window)) {
+        alert("お使いのブラウザは音声読み上げに対応していません。");
+        return;
+      }
+      window.speechSynthesis.cancel(); // 再生中の音声を停止
+      const uttr = new SpeechSynthesisUtterance(text);
+      uttr.lang = 'ja-JP';
+      uttr.rate = 1.0;
+      window.speechSynthesis.speak(uttr);
+    }
 
     async function postJson(path, body) {
       const res = await fetch(path, {
@@ -275,7 +546,7 @@ createApp({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || `${path} の呼び出しに失敗しました(status: ${res.status})`);
+        throw new Error(data.error || `${path} の処理に失敗しました(status: ${res.status})`);
       }
       return data;
     }
@@ -289,7 +560,6 @@ createApp({
         });
 
         if (data.sufficient) {
-          // ヒアリング完了時: 候補リストを保持し選択画面へ移行
           roomCandidates.value = data.room_candidates || [];
           recommendedRoomId.value = data.final_room || (roomCandidates.value[0] && roomCandidates.value[0].id) || "";
           selectedRoomId.value = recommendedRoomId.value;
@@ -346,6 +616,7 @@ createApp({
     }
 
     function reset() {
+      window.speechSynthesis?.cancel();
       phase.value = "intro";
       initialQuestion.value = "";
       state.value = "";
@@ -369,8 +640,11 @@ createApp({
       selectedRoomId,
       recommendedRoomId,
       roomLabel,
-      document: documentText,
+      documentText,
       errorMessage,
+      isListening,
+      toggleVoiceInput,
+      speak,
       start,
       submitAnswer,
       confirmRoom,

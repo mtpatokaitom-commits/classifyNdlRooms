@@ -72,7 +72,7 @@ const MAX_STATE_LENGTH = 4000;
 // GEMINI_MODEL環境変数が未設定のときに使うデフォルトモデル。
 // https://ai.google.dev/gemini-api/docs にある現行モデル名を確認のうえ、
 // 必要に応じて環境変数側で上書きすること。
-const GEMINI_MODEL_DEFAULT = "gemini-2.0-flash";
+const GEMINI_MODEL_DEFAULT = "gemini-flash-latest";
 
 // room.confidence がこの値以上になったら、質問を打ち切って良いとみなす。
 // confidence-gated routing (https://docs.typesafe.ai/patterns/confidence-routing)

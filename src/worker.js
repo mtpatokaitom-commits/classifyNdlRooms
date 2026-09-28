@@ -56,7 +56,7 @@
 //    final_room : /systemoneのレスポンスで得たfinal_room(ROOM_CRITERIAのキー)
 //  - Gemini(Interactions API: POST /v1beta/interactions)に、対話記録を渡して職員向けの引継ぎ文書を
 //    生成させ、{ room, room_label, document } を返す。
-//  - プロンプト・モデル名はここで固定し、クライアントからは変更できない
+//  - system_instruction・モデル名はここで固定し、クライアントからは変更できない
 //    (/systemoneと同じくAPI利用枠の保護のため)。
 //
 // 必須の環境変数(Secret): TYPESAFE_API_KEY, GEMINI_API_KEY
@@ -363,13 +363,18 @@ async function handleSystemOne(request, env) {
   // クライアントはこのsufficientだけを見ればループを続けるか終了するか判断できる。
   const roomConfidence = data?.answers?.room?.confidence;
   const confidenceEnough = typeof roomConfidence === "number" && roomConfidence >= ROOM_CONFIDENCE_THRESHOLD;
-  const sufficient = confidenceEnough || exhausted;
+  // next_questionを尋ねたのに、jevの応答形式が想定外でchoiceが取れない場合は、
+  // クライアントが質問を続けられず止まってしまうので、その場合も強制的に打ち切る。
+  const nextQuestionBroken = !exhausted && !data?.answers?.next_question?.choice;
+  const sufficient = confidenceEnough || exhausted || nextQuestionBroken;
 
   // 案内先として実際に使うroom。confidenceが十分ならjevの判定をそのまま使うが、
   // 聞くべき観点を全て聞き終えてもconfidenceが閾値に届かない場合は、低確信度な
   // 推測をそのまま採用せず"information"(総合案内)に上書きする。職員による
   // ヒアリングで補ってもらう想定。
-  const finalRoom = confidenceEnough ? data?.answers?.room?.choice ?? null : (exhausted ? "information" : null);
+  const finalRoom = confidenceEnough
+    ? data?.answers?.room?.choice ?? "information"
+    : (sufficient ? "information" : null);
 
   // next_questionが選ばれた場合、実際に利用者へ提示する質問文をここで付与する。
   // クライアント側でCANDIDATE_QUESTIONSのtextを二重管理しなくて済むようにするため。

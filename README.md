@@ -42,7 +42,9 @@
    - 用意している質問候補を全て聞き終えるか、規定のターン数に達しても確信度が
      十分にならない場合は、`final_room`が`"information"`(総合案内)になる。
 4. 確信度が十分になったら(`sufficient: true`)、`POST /handover`を呼び出し、
-   Gemini APIにこれまでの対話記録を渡して、担当職員への引継ぎ文書を生成する。
+   Gemini API(Interactions API)にこれまでの対話記録を渡して、担当職員への
+   引継ぎ文書を生成する。利用者の相談内容をGoogle側に残さないよう`store: false`で
+   呼び出している。
 5. フロントエンドは案内先の室名と引継ぎ文書を利用者に表示する。
 
 `src/worker.js`冒頭のコメントに、より詳細な設計意図とAPIのリクエスト/レスポンス
@@ -91,7 +93,7 @@ wrangler deploy
 | `MAX_STATE_LENGTH` | 対話全文の文字数上限 | 4000 |
 | `ROOM_CONFIDENCE_THRESHOLD` | この確信度以上でroomの判定を確定させる | 0.65 |
 | `MAX_TURNS` | 質問を打ち切るまでの最大ターン数 | 5 |
-| `GEMINI_MODEL_DEFAULT` | `GEMINI_MODEL`環境変数が未設定の場合に使うモデル名 | `gemini-2.5-flash` |
+| `GEMINI_MODEL_DEFAULT` | `GEMINI_MODEL`環境変数が未設定の場合に使うモデル名 | `gemini-flash-lite-latest` |
 | `ROOM_CRITERIA` | 各専門室の判定基準(jevに渡す説明文) | - |
 | `ROOM_LABELS` | 引継ぎ文書に載せる室の表示名 | - |
 | `CANDIDATE_QUESTIONS` | 次に聞く質問の候補プール | - |
@@ -100,9 +102,23 @@ wrangler deploy
 ため、運用開始前に必ず確認・修正してください。
 
 `GEMINI_MODEL`はwrangler.jsoncの`vars`、またはCloudflareダッシュボードの
-環境変数から上書きできる(Secretではなく通常の環境変数でよい)。Geminiの
-モデル名は更新頻度が高いため、最新の推奨モデルは
-https://ai.google.dev/gemini-api/docs を確認すること。
+環境変数から上書きできる(Secretではなく通常の環境変数でよい)。
+
+**Geminiのモデル名は廃止が早く、固定名だと突然404になります。**(2026年9月時点:
+`gemini-2.0-flash`は2026/6/1に廃止済み、`gemini-2.5-flash`は新規のAPIキーでは
+利用不可。)そのため既定値は「最新のFlash-Liteを指すエイリアス」
+`gemini-flash-lite-latest`にしています。固定したい場合は
+https://ai.google.dev/gemini-api/docs/models で現行のモデル名を確認し、
+`GEMINI_MODEL`で指定してください(新規プロジェクトには`gemini-3.5-flash-lite`
+または`gemini-3.8-flash`が案内されています)。
+
+`wrangler.jsonc`の`vars`に`GEMINI_MODEL`を書くと、コードの既定値より優先されます。
+
+### Geminiで404 / 502が出たとき
+
+`wrangler tail`を起動した状態で再現すると、`Gemini API error: status=... model=...
+body=...`という行に、Google側の実際のエラー内容が出ます。クライアントには上流の
+詳細は返さず、レート制限(429)以外はすべて502として返します。
 
 ## API仕様
 

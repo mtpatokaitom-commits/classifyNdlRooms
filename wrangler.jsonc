@@ -15,15 +15,17 @@
   "assets": {
     "directory": "public",
     "binding": "ASSETS"
-  },
+  }
 
-  // 機密でない環境変数はここに書ける。
-  // GEMINI_MODELは省略可(省略時はworker.js内のGEMINI_MODEL_DEFAULTを使用)。
-  // 逆にTYPESAFE_API_KEYとGEMINI_API_KEYは秘密情報なので、ここには書かず、
-  // 下記コマンドでSecretとして登録すること:
+  // 機密でない環境変数はここに書ける(例: "vars": { "GEMINI_MODEL": "gemini-3.5-flash-lite" })。
+  // GEMINI_MODELは省略可。省略時はworker.js内のGEMINI_MODEL_DEFAULTを使う。
+  // 注意: ここに書いた値はコードの既定値より優先される。また、wrangler deployのたびに
+  // ダッシュボードで手動設定した同名の変数がここの値で上書きされる。
+  //
+  // TYPESAFE_API_KEYとGEMINI_API_KEYは秘密情報なので、ここには書かず、
+  // Workerの Settings → Variables and Secrets に「Secret」として登録すること
+  // (Git連携のBuild settingsにある"Build variables"は別物で、Workerの実行時には渡らない)。
+  // CLIなら:
   //   wrangler secret put TYPESAFE_API_KEY
   //   wrangler secret put GEMINI_API_KEY
-  "vars": {
-    "GEMINI_MODEL": "gemini-3.5-flash"
-  }
 }

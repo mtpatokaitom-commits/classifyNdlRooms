@@ -36,16 +36,23 @@
 1. 利用者が`public/index.html`で最初の相談内容を入力する。
 2. フロントエンドが`POST /systemone`を呼び出す。`src/worker.js`がjev(typesafe.ai)
    に中継し、現時点で最も近い専門室(`room`)と、次に聞くべき質問(`next_question`)
-   を判定する。
-3. `room`の確信度(`confidence`)が十分でなければ、`next_question`の質問文を
-   利用者に提示して回答してもらい、これまでの対話を積み上げてもう一度2に戻る。
-   - 用意している質問候補を全て聞き終えるか、規定のターン数に達しても確信度が
-     十分にならない場合は、`final_room`が`"information"`(総合案内)になる。
-4. 確信度が十分になったら(`sufficient: true`)、`POST /handover`を呼び出し、
-   Gemini API(Interactions API)にこれまでの対話記録を渡して、担当職員への
-   引継ぎ文書を生成する。利用者の相談内容をGoogle側に残さないよう`store: false`で
-   呼び出している。
-5. フロントエンドは案内先の室名と引継ぎ文書を利用者に表示する。
+   を判定する。この呼び出しは2つのフェーズから成る(詳細は`src/worker.js`冒頭の
+   コメントを参照)。
+   - **フェーズ1(案内先の判定)**: `room`の確信度(`confidence`)が
+     `ROOM_CONFIDENCE_THRESHOLD`に達するか、用意した質問候補を聞き尽くすまで、
+     `next_question`を提示して回答を積み上げる。確信度が届かないまま終わった
+     場合、`final_room`は`"information"`(総合案内)になる。
+   - **フェーズ2(振分け後の追加ヒアリング)**: フェーズ1が終わって`final_room`が
+     確定した後も、担当職員向けに役立つ情報(具体的な手がかり、用途、期限など)を
+     追加で数問ヒアリングしてから終了する。
+3. 両フェーズが終わって`sufficient: true`になったら、`POST /handover`を呼び出し、
+   Gemini API(Interactions API)にこれまでの対話記録(フェーズ2の回答も含む)を
+   渡して、担当職員への引継ぎ文書を生成する。利用者の相談内容をGoogle側に残さない
+   よう`store: false`で呼び出している。
+4. フロントエンドは案内先の室名と引継ぎ文書を利用者に表示する。
+
+フロントエンド(`public/index.html`)は`sufficient`と`answers.next_question`だけを
+見ていればよく、今どちらのフェーズかを意識する必要はない。
 
 `src/worker.js`冒頭のコメントに、より詳細な設計意図とAPIのリクエスト/レスポンス
 形式を記載している。
@@ -82,7 +89,9 @@ wrangler deploy
 `wrangler secret put`で登録した値は、Cloudflareダッシュボードの
 「対象Worker → Settings → Variables and Secrets」でも確認・変更できる
 (表示は隠されるが、値自体はここで管理されている)。平文の環境変数(Text)
-ではなく必ず"Secret"として登録すること。
+ではなく必ず"Secret"として登録すること。Git連携(Workers Builds)の
+「Build settings → Build variables」はビルド処理専用で、Workerの実行時には
+渡らないので、Secretは必ずWorker本体の設定ページに登録すること。
 
 ## 主な設定値(src/worker.js)
 
@@ -92,11 +101,13 @@ wrangler deploy
 |---|---|---|
 | `MAX_STATE_LENGTH` | 対話全文の文字数上限 | 4000 |
 | `ROOM_CONFIDENCE_THRESHOLD` | この確信度以上でroomの判定を確定させる | 0.65 |
-| `MAX_TURNS` | 質問を打ち切るまでの最大ターン数 | 5 |
+| `ROOM_MAX_TURNS` | フェーズ1(案内先の判定)を打ち切るまでの最大ターン数 | 5 |
+| `POST_ROUTING_MAX_TURNS` | フェーズ2(振分け後の追加ヒアリング)を打ち切るまでの最大ターン数 | 3 |
 | `GEMINI_MODEL_DEFAULT` | `GEMINI_MODEL`環境変数が未設定の場合に使うモデル名 | `gemini-flash-lite-latest` |
 | `ROOM_CRITERIA` | 各専門室の判定基準(jevに渡す説明文) | - |
 | `ROOM_LABELS` | 引継ぎ文書に載せる室の表示名 | - |
-| `CANDIDATE_QUESTIONS` | 次に聞く質問の候補プール | - |
+| `ROOM_CANDIDATE_QUESTIONS` | フェーズ1で使う、次に聞く質問の候補プール | - |
+| `POST_ROUTING_QUESTIONS` | フェーズ2で使う、振分け後の追加ヒアリングの候補プール | - |
 
 **`ROOM_LABELS`は仮の室名です。** 実際のNDL東京本館の室名と異なる場合がある
 ため、運用開始前に必ず確認・修正してください。
@@ -133,7 +144,7 @@ body=...`という行に、Google側の実際のエラー内容が出ます。�
 }
 ```
 
-レスポンス(例):
+レスポンス(例、フェーズ1の途中):
 
 ```json
 {
@@ -145,6 +156,23 @@ body=...`という行に、Google側の実際のエラー内容が出ます。�
   "final_room": null
 }
 ```
+
+レスポンス(例、フェーズ1が完了しフェーズ2に入った直後):
+
+```json
+{
+  "answers": {
+    "room": { "choice": "map", "confidence": 0.81, "probabilities": { "...": 0.0 } },
+    "next_question": { "choice": "deadline_check", "text": "この件は今日中に必要ですか?..." }
+  },
+  "sufficient": false,
+  "final_room": "map"
+}
+```
+
+`final_room`はフェーズ1が完了した時点で確定するが、`sufficient`はフェーズ2も
+終わるまで`true`にならない。クライアントは`sufficient`だけを見てループの継続・
+終了を判断すればよく、`final_room`が非nullになった時点でも質問を続けてよい。
 
 `sufficient: true`のとき、`final_room`(専門室のid、または`"information"`)を
 案内先として採用する。

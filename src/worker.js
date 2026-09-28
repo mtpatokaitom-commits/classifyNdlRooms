@@ -9,34 +9,38 @@
 // ここで固定する。クライアント側から任意のモデルや構成を指定してAPI利用枠を
 // 消費されることを防ぐため。
 //
-// 【多ターン化の考え方】
+// 【2フェーズの多ターン化の考え方】
 //  - リクエストボディは { state, asked_questions } の2つ。
 //    state          : 利用者の元の相談文 + これまでの「質問→回答」のやり取りを
 //                     毎ターン全文で積み上げたテキスト(サーバー側では履歴を保持しない)
-//    asked_questions: これまでにクライアントが尋ねたCANDIDATE_QUESTIONSのid配列
-//                     (例: ["subject_area", "time_period"])。初回は省略/空配列でよい。
+//    asked_questions: これまでにクライアントが尋ねたROOM_CANDIDATE_QUESTIONS・
+//                     POST_ROUTING_QUESTIONSのid配列(両者を区別せず同じ配列に積む)。
+//                     初回は省略/空配列でよい。
 //  - jevのquestionsはChoice/Score/Noulの3種類のみで、自由記述の質問文を
-//    生成させることはできない。そのため「次に聞く質問」もCANDIDATE_QUESTIONS
-//    という固定の候補プールから choice型 で選ばせる方式にしている。
-//    asked_questionsに含まれるidは、criteriaから除外してjevに渡すため、
-//    同じ質問が2度選ばれることはない。
-//  - Choice型は元々 choice/probabilities/confidence を返す
-//    (https://docs.typesafe.ai/patterns/confidence-routing)。
-//    そこで終了判定用に別のnoul質問を追加するのではなく、roomのconfidenceが
-//    ROOM_CONFIDENCE_THRESHOLD以上かどうかをサーバー側で計算し、sufficientと
-//    してレスポンスに含めている。CANDIDATE_QUESTIONSを全て聞き終えた場合も
-//    (それ以上聞くべき観点がないため)強制的にsufficient=trueとする。
-//  - 全候補を聞き終えてもconfidenceが閾値に届かない場合、jevの低確信度な
-//    推測をそのまま採用せず、final_roomを"information"(総合案内)に上書きする。
-//    インフォメーションでは職員が直接ヒアリングを行い、自動判定で絞りきれ
-//    なかった部分を補う想定。クライアントはsufficient=true時、
-//    answers.room.choiceではなく必ずfinal_roomを見て案内先を決めること。
-//  - 1回の呼び出しで以下をjevに判定させる:
-//      room          : 現時点で最も近い専門室(choice型、confidence付き)
-//      next_question : 未回答のCANDIDATE_QUESTIONSから次に聞くべき質問を選ぶ
-//                       (choice型。全て聞き終えている場合はこの質問自体を送らない)
-//  - レスポンスのnext_question.textには、そのまま利用者に提示できる質問文を
-//    サーバー側で付与するので、クライアント側で質問文を二重管理する必要はない。
+//    生成させることはできない。そのため「次に聞く質問」も固定の候補プールから
+//    choice型 で選ばせる方式にしている。asked_questionsに含まれるidはcriteriaから
+//    除外してjevに渡すため、同じ質問が2度選ばれることはない。
+//
+//  フェーズ1(案内先の判定): ROOM_CANDIDATE_QUESTIONSから質問を選びながら、
+//    roomのconfidence(Choice型が元々返す値。https://docs.typesafe.ai/patterns/confidence-routing)
+//    がROOM_CONFIDENCE_THRESHOLD以上になるか、候補を聞き尽くす(ROOM_MAX_TURNS到達)
+//    まで続ける。終わったら final_room が確定する(confidence不足のまま終わった
+//    場合は低確信度な推測を採用せず"information"に倒す)。
+//
+//  フェーズ2(振分け後の追加ヒアリング): フェーズ1完了後、POST_ROUTING_QUESTIONSから
+//    質問を選びながら、担当職員が対応する上で役立つ情報(具体的な手がかり、用途、
+//    期限など)を追加で集める。POST_ROUTING_MAX_TURNS到達、または候補を聞き尽くす
+//    まで続ける。
+//
+//  sufficient: trueになるのは両フェーズが完了したときだけ。つまりGeminiによる
+//    引継ぎ文書生成(/handover)は、案内先が決まった直後ではなく、追加ヒアリングが
+//    終わった後まで行われない。
+//
+//  next_question: どちらのフェーズの質問かをクライアントに意識させないよう、
+//    answers.next_question に統一して返す(内部的にはjevへnext_question_room /
+//    next_question_postの2種類を並行して評価させ、そのターンでどちらを使うかを
+//    サーバー側で選んでいる。jevは質問を並列評価するため、両方を毎回聞いても
+//    レイテンシはほぼ変わらない)。
 //  - クライアント側のロジック(疑似コード):
 //      askedIds = []
 //      while (true) {
@@ -49,10 +53,11 @@
 //      }
 //
 // 【引継ぎ文書生成(/handover)の考え方】
-//  - インタビューが終了し final_room が確定した後、クライアントが1回だけ
-//    呼び出す想定(/systemoneのようにループでは呼ばない)。
+//  - 上記の両フェーズが終了し(sufficient: true)final_room が確定した後、
+//    クライアントが1回だけ呼び出す想定(/systemoneのようにループでは呼ばない)。
 //  - リクエストボディは { state, final_room } の2つ。
-//    state      : /systemoneに積み上げてきた対話全文をそのまま渡せばよい
+//    state      : /systemoneに積み上げてきた対話全文(フェーズ2の回答も含む)を
+//                 そのまま渡せばよい
 //    final_room : /systemoneのレスポンスで得たfinal_room(ROOM_CRITERIAのキー)
 //  - Gemini(Interactions API: POST /v1beta/interactions)に、対話記録を渡して職員向けの引継ぎ文書を
 //    生成させ、{ room, room_label, document } を返す。
@@ -126,7 +131,7 @@ for (const key of Object.keys(ROOM_CRITERIA)) {
 // 問題にならない。実際に利用者へ聞く回数はMAX_TURNSで別途頭打ちにしている。
 // description は jev が選択理由を判断するための説明、text は実際に利用者に
 // 提示する質問文。
-const CANDIDATE_QUESTIONS = {
+const ROOM_CANDIDATE_QUESTIONS = {
   // --- 主題・分野を絞る ---
   subject_area: {
     description: "どのような分野のテーマか(人文科学/科学技術・経済/政治・法律など)を特定するための質問。humanities・science_economy・parliament_govの切り分けに有効。",
@@ -258,10 +263,52 @@ const CANDIDATE_QUESTIONS = {
   }
 };
 
-// 質問を打ち切るまでの最大ターン数。CANDIDATE_QUESTIONSの候補数を増やしても、
+// 質問を打ち切るまでの最大ターン数。ROOM_CANDIDATE_QUESTIONSの候補数を増やしても、
 // 実際に利用者に尋ねる回数はこの上限で頭打ちにする(全候補を尋ね切る前提ではなく、
 // jevがそのケースに応じて最も有効な数問だけを選び取る想定)。
-const MAX_TURNS = 5;
+const ROOM_MAX_TURNS = 5;
+
+// 【振分け後の追加ヒアリング(POST_ROUTING_QUESTIONS)】
+// room(案内先)の判定そのものには使わないが、案内先が決まった後に職員が対応する
+// うえで役立つ情報を、追加でこの数だけ聞いてから引継ぎ文書を作成する。
+// room判定用の質問(ROOM_CANDIDATE_QUESTIONS)とは別プールにして、役割を混在させない。
+const POST_ROUTING_QUESTIONS = {
+  specific_title_author_check: {
+    description: "書名・著者名・資料番号など、より具体的な手がかりを深掘りする質問。職員が資料を特定する助けになる。",
+    text: "書名や著者名、資料番号など、より具体的な手がかりがあれば教えてください。"
+  },
+  purpose_use_check: {
+    description: "調べた内容を何に使うか(レポート提出、仕事、出版物制作、個人の興味など)を確認する質問。",
+    text: "調べた内容は、どのような用途で使う予定ですか?(レポート提出、仕事、出版物制作、個人の興味など)"
+  },
+  deadline_check: {
+    description: "資料が必要な期限(今日中かどうかなど)を確認する質問。対応の優先度に関わる。",
+    text: "この件は今日中に必要ですか?それとも期限に余裕はありますか?"
+  },
+  depth_level_check: {
+    description: "概要で足りるか、詳しい情報が必要かを確認する質問。案内の仕方や資料の選び方に関わる。",
+    text: "概要が分かれば十分ですか、それとも詳しい情報が必要ですか?"
+  },
+  quantity_check: {
+    description: "必要な資料が1件程度か、複数を比較したいかを確認する質問。",
+    text: "必要な資料は1件程度で足りますか、それとも複数を比較したいですか?"
+  },
+  copy_needed_check: {
+    description: "資料の複写(コピー)が必要かどうかを確認する質問。複写窓口の案内が必要かに関わる。",
+    text: "資料の複写(コピー)は必要ですか?"
+  },
+  prior_research_check: {
+    description: "利用者がこれまでに自分で調べた内容・場所を確認する質問。二度手間を避けるのに役立つ。",
+    text: "これまでにご自身で調べてみたことはありますか?(調べた場所や検索した言葉など)"
+  },
+  citation_needed_check: {
+    description: "出典の明記や、引用形式の指定が必要かどうかを確認する質問。",
+    text: "調べた情報の出典を明記する必要はありますか?"
+  }
+};
+
+// 振分け後の追加ヒアリングを打ち切るまでの最大ターン数。
+const POST_ROUTING_MAX_TURNS = 3;
 
 export default {
   async fetch(request, env) {
@@ -290,9 +337,12 @@ async function handleSystemOne(request, env) {
 
   const state = typeof payload?.state === "string" ? payload.state.trim() : "";
   const askedQuestions = Array.isArray(payload?.asked_questions)
-    // 既知のcandidate id以外は無視する(未知の値を紛れ込ませる余地をなくす)
+    // 既知のid(room用・振分け後用どちらか)以外は無視する
     ? payload.asked_questions.filter(
-        (id) => typeof id === "string" && Object.prototype.hasOwnProperty.call(CANDIDATE_QUESTIONS, id)
+        (id) =>
+          typeof id === "string" &&
+          (Object.prototype.hasOwnProperty.call(ROOM_CANDIDATE_QUESTIONS, id) ||
+            Object.prototype.hasOwnProperty.call(POST_ROUTING_QUESTIONS, id))
       )
     : [];
 
@@ -308,14 +358,23 @@ async function handleSystemOne(request, env) {
     return jsonError("サーバー側でAPIキーが未設定です。", 500);
   }
 
-  // まだ聞いていない候補だけをjevに渡す。既出のidはasked_questionsで除外する。
-  const remainingIds = Object.keys(CANDIDATE_QUESTIONS).filter(
-    (id) => !askedQuestions.includes(id)
+  // asked_questionsを、room用・振分け後用のidにそれぞれ振り分ける。
+  // クライアントは区別せず同じ配列に積んでいくだけでよい(サーバー側で判定する)。
+  const askedRoomIds = askedQuestions.filter((id) => id in ROOM_CANDIDATE_QUESTIONS);
+  const askedPostIds = askedQuestions.filter((id) => id in POST_ROUTING_QUESTIONS);
+  const remainingRoomIds = Object.keys(ROOM_CANDIDATE_QUESTIONS).filter(
+    (id) => !askedRoomIds.includes(id)
   );
-  // 候補を全て聞き尽くした場合、またはMAX_TURNSに達した場合は、
-  // それ以上next_questionを尋ねる意味がないので強制的に打ち切る。
-  const exhausted = remainingIds.length === 0 || askedQuestions.length >= MAX_TURNS;
+  const remainingPostIds = Object.keys(POST_ROUTING_QUESTIONS).filter(
+    (id) => !askedPostIds.includes(id)
+  );
+  const roomPoolExhausted = remainingRoomIds.length === 0 || askedRoomIds.length >= ROOM_MAX_TURNS;
+  const postPoolExhausted = remainingPostIds.length === 0 || askedPostIds.length >= POST_ROUTING_MAX_TURNS;
 
+  // room判定がこのターンで確定するかどうかは、jevの結果(confidence)を見るまで
+  // 分からない。そこで「room用の次の質問」と「振分け後用の次の質問」を同じ呼び出しの
+  // 中で並行して評価させておき(jevは質問を並列評価するため追加コストはほぼ無い)、
+  // 結果を受け取ってから、実際にどちらを使うかをコード側で決める。
   const questions = {
     room: {
       type: "choice",
@@ -323,13 +382,21 @@ async function handleSystemOne(request, env) {
       criteria: ROOM_CRITERIA
     }
   };
-
-  if (!exhausted) {
-    questions.next_question = {
+  if (!roomPoolExhausted) {
+    questions.next_question_room = {
       type: "choice",
-      instructions: "roomの判定に確信が持てない場合に、次に利用者へ尋ねるべき最も情報量の多い質問を1つ選んでください。",
+      instructions: "案内先の専門室の判定に確信が持てない場合に、次に利用者へ尋ねるべき最も情報量の多い質問を1つ選んでください。",
       criteria: Object.fromEntries(
-        remainingIds.map((id) => [id, CANDIDATE_QUESTIONS[id].description])
+        remainingRoomIds.map((id) => [id, ROOM_CANDIDATE_QUESTIONS[id].description])
+      )
+    };
+  }
+  if (!postPoolExhausted) {
+    questions.next_question_post = {
+      type: "choice",
+      instructions: "案内先の専門室が決まった後、担当職員が対応する上で役立つ追加情報を集めるために、次に利用者へ尋ねるべき最も有用な質問を1つ選んでください。",
+      criteria: Object.fromEntries(
+        remainingPostIds.map((id) => [id, POST_ROUTING_QUESTIONS[id].description])
       )
     };
   }
@@ -358,29 +425,58 @@ async function handleSystemOne(request, env) {
     return jsonError("jevからの応答の解析に失敗しました。", 502);
   }
 
-  // room.confidence がしきい値以上、または候補を聞き尽くした場合は
-  // 質問を打ち切って良いというフラグをサーバー側で計算して付け足す。
-  // クライアントはこのsufficientだけを見ればループを続けるか終了するか判断できる。
+  // --- フェーズ1: 案内先(room)の判定 ---
+  // room.confidenceがしきい値以上、またはroom用の候補を聞き尽くした場合、
+  // このフェーズは完了とみなす。
   const roomConfidence = data?.answers?.room?.confidence;
   const confidenceEnough = typeof roomConfidence === "number" && roomConfidence >= ROOM_CONFIDENCE_THRESHOLD;
-  // next_questionを尋ねたのに、jevの応答形式が想定外でchoiceが取れない場合は、
-  // クライアントが質問を続けられず止まってしまうので、その場合も強制的に打ち切る。
-  const nextQuestionBroken = !exhausted && !data?.answers?.next_question?.choice;
-  const sufficient = confidenceEnough || exhausted || nextQuestionBroken;
+  let phase1Done = confidenceEnough || roomPoolExhausted;
 
-  // 案内先として実際に使うroom。confidenceが十分ならjevの判定をそのまま使うが、
-  // 聞くべき観点を全て聞き終えてもconfidenceが閾値に届かない場合は、低確信度な
-  // 推測をそのまま採用せず"information"(総合案内)に上書きする。職員による
-  // ヒアリングで補ってもらう想定。
-  const finalRoom = confidenceEnough
-    ? data?.answers?.room?.choice ?? "information"
-    : (sufficient ? "information" : null);
+  let nextQuestion = null;
+  if (!phase1Done) {
+    const nq = data?.answers?.next_question_room;
+    if (nq?.choice && ROOM_CANDIDATE_QUESTIONS[nq.choice]) {
+      nextQuestion = { choice: nq.choice, text: ROOM_CANDIDATE_QUESTIONS[nq.choice].text };
+    } else {
+      // jevの応答形式が想定外でchoiceが取れない場合、フェーズ1で止まってしまわない
+      // よう強制的に完了扱いにする。
+      phase1Done = true;
+    }
+  }
 
-  // next_questionが選ばれた場合、実際に利用者へ提示する質問文をここで付与する。
-  // クライアント側でCANDIDATE_QUESTIONSのtextを二重管理しなくて済むようにするため。
-  if (data?.answers?.next_question?.choice) {
-    const chosenId = data.answers.next_question.choice;
-    data.answers.next_question.text = CANDIDATE_QUESTIONS[chosenId]?.text ?? null;
+  const finalRoom = phase1Done
+    ? (confidenceEnough ? data?.answers?.room?.choice ?? "information" : "information")
+    : null;
+
+  // --- フェーズ2: 振分け後の追加ヒアリング ---
+  // フェーズ1が完了して初めて始まる。ここが終わるまでsufficientはtrueにしない
+  // (= Geminiによる引継ぎ文書生成はフェーズ2の完了後まで行わない)。
+  let sufficient;
+  if (!phase1Done) {
+    sufficient = false;
+  } else if (postPoolExhausted) {
+    sufficient = true;
+  } else {
+    const nq = data?.answers?.next_question_post;
+    if (nq?.choice && POST_ROUTING_QUESTIONS[nq.choice]) {
+      nextQuestion = { choice: nq.choice, text: POST_ROUTING_QUESTIONS[nq.choice].text };
+      sufficient = false;
+    } else {
+      // フェーズ2も応答形式が想定外なら、そこで打ち切って良いこととする。
+      sufficient = true;
+    }
+  }
+
+  if (data?.answers) {
+    // クライアントは answers.next_question だけを見ればよいように統一する
+    // (room用/振分け後用のどちらから来たかは意識させない)。
+    if (nextQuestion) {
+      data.answers.next_question = nextQuestion;
+    } else {
+      delete data.answers.next_question;
+    }
+    delete data.answers.next_question_room;
+    delete data.answers.next_question_post;
   }
 
   return new Response(JSON.stringify({ ...data, sufficient, final_room: finalRoom }), {

@@ -1,7 +1,7 @@
 {
   // Cloudflareダッシュボード上でのWorker名。デプロイ先のURL
   // (<name>.<your-subdomain>.workers.dev)にも使われる。
-  "name": "ndl-jev-routing",
+  "name": "classifyndlrooms",
 
   // Workerのエントリスクリプト。src/worker.jsが
   // POST /systemone(jev中継)とPOST /handover(Gemini中継)を処理する。

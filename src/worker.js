@@ -1,93 +1,7 @@
 // src/worker.js
-//
-// このWorkerは3つの役割を持つ:
-//  1. public/ 配下の静的ファイル(index.htmlなど)を配信する(env.ASSETS 経由)
-//  2. POST /systemone を、jev(専門室振り分け)への中継として処理する
-//  3. POST /handover を、Gemini API(職員への引継ぎ文書生成)への中継として処理する
-//
-// クライアントからは対話内容だけを受け取り、model / questions / prompt は
-// ここで固定する。クライアント側から任意のモデルや構成を指定してAPI利用枠を
-// 消費されることを防ぐため。
-//
-// 【2フェーズの多ターン化の考え方】
-//  - リクエストボディは { state, asked_questions } の2つ。
-//    state          : 利用者の元の相談文 + これまでの「質問→回答」のやり取りを
-//                     毎ターン全文で積み上げたテキスト(サーバー側では履歴を保持しない)
-//    asked_questions: これまでにクライアントが尋ねたROOM_CANDIDATE_QUESTIONS・
-//                     POST_ROUTING_QUESTIONSのid配列(両者を区別せず同じ配列に積む)。
-//                     初回は省略/空配列でよい。
-//  - jevのquestionsはChoice/Score/Noulの3種類のみで、自由記述の質問文を
-//    生成させることはできない。そのため「次に聞く質問」も固定の候補プールから
-//    choice型 で選ばせる方式にしている。asked_questionsに含まれるidはcriteriaから
-//    除外してjevに渡すため、同じ質問が2度選ばれることはない。
-//
-//  フェーズ1(案内先の判定): ROOM_CANDIDATE_QUESTIONSから質問を選びながら、
-//    roomのconfidence(Choice型が元々返す値。https://docs.typesafe.ai/patterns/confidence-routing)
-//    がROOM_CONFIDENCE_THRESHOLD以上になるか、候補を聞き尽くす(ROOM_MAX_TURNS到達)
-//    まで続ける。終わったら final_room が確定する(confidence不足のまま終わった
-//    場合は低確信度な推測を採用せず"information"に倒す)。
-//
-//  フェーズ2(振分け後の追加ヒアリング): フェーズ1完了後、POST_ROUTING_QUESTIONSから
-//    質問を選びながら、担当職員が対応する上で役立つ情報(具体的な手がかり、用途、
-//    期限など)を追加で集める。POST_ROUTING_MAX_TURNS到達、または候補を聞き尽くす
-//    まで続ける。
-//
-//  sufficient: trueになるのは両フェーズが完了したときだけ。つまりGeminiによる
-//    引継ぎ文書生成(/handover)は、案内先が決まった直後ではなく、追加ヒアリングが
-//    終わった後まで行われない。
-//
-//  next_question: どちらのフェーズの質問かをクライアントに意識させないよう、
-//    answers.next_question に統一して返す(内部的にはjevへnext_question_room /
-//    next_question_postの2種類を並行して評価させ、そのターンでどちらを使うかを
-//    サーバー側で選んでいる。jevは質問を並列評価するため、両方を毎回聞いても
-//    レイテンシはほぼ変わらない)。
-//  - クライアント側のロジック(疑似コード):
-//      askedIds = []
-//      while (true) {
-//        res = await callSystemOne(state, askedIds)
-//        if (res.sufficient) { show res.final_room; break }
-//        questionId = res.answers.next_question.choice
-//        answer = askUser(res.answers.next_question.text)
-//        state += `\nQ: ${res.answers.next_question.text}\nA: ${answer}`
-//        askedIds.push(questionId)
-//      }
-//
-// 【引継ぎ文書生成(/handover)の考え方】
-//  - 上記の両フェーズが終了し(sufficient: true)final_room が確定した後、
-//    クライアントが1回だけ呼び出す想定(/systemoneのようにループでは呼ばない)。
-//  - リクエストボディは { state, final_room } の2つ。
-//    state      : /systemoneに積み上げてきた対話全文(フェーズ2の回答も含む)を
-//                 そのまま渡せばよい
-//    final_room : /systemoneのレスポンスで得たfinal_room(ROOM_CRITERIAのキー)
-//  - Gemini(Interactions API: POST /v1beta/interactions)に、対話記録を渡して職員向けの引継ぎ文書を
-//    生成させ、{ room, room_label, document } を返す。
-//  - system_instruction・モデル名はここで固定し、クライアントからは変更できない
-//    (/systemoneと同じくAPI利用枠の保護のため)。
-//
-// 必須の環境変数(Secret): TYPESAFE_API_KEY, GEMINI_API_KEY
-//   Cloudflareダッシュボード → 対象Worker → Settings → Variables and Secrets
-//   で "Secret" として登録すること(平文の Text ではなく Secret を使う)。
-// 任意の環境変数: GEMINI_MODEL
-//   省略時はGEMINI_MODEL_DEFAULTを使う。Geminiのモデル名は更新頻度が高いため、
-//   コードを変更せずに切り替えられるようにしている。
 
-// 履歴を積み上げる分、単発時より長くなるため上限を引き上げている
 const MAX_STATE_LENGTH = 4000;
-
-// GEMINI_MODEL環境変数が未設定のときに使うデフォルトモデル。
-// gemini-flash-lite-latest は「最新のFlash-Liteを指すエイリアス」(公式に存在する名前)。
-// モデルの廃止が早く、固定名(gemini-2.0-flash: 2026/6/1廃止済み、gemini-2.5-flash: 新規
-// キーでは利用不可など)だと404になりやすいため、エイリアスを既定にしている。
-// エイリアスの指す先が入れ替わる際は、Googleから2週間前に通知がある。
-// 固定したい場合は https://ai.google.dev/gemini-api/docs/models で名前を確認し、
-// GEMINI_MODEL環境変数で上書きすること(例: gemini-3.5-flash-lite / gemini-3.8-flash)。
 const GEMINI_MODEL_DEFAULT = "gemini-flash-lite-latest";
-
-// room.confidence がこの値以上になったら、質問を打ち切って良いとみなす。
-// confidence-gated routing (https://docs.typesafe.ai/patterns/confidence-routing)
-// のvoice bankingの例では低リスクな操作の下限を0.6としている。専門室の案内は
-// 誤っても職員が案内し直せる程度のリスクなので、まずは0.65程度から実運用で
-// 調整するのが良い。
 const ROOM_CONFIDENCE_THRESHOLD = 0.65;
 
 const ROOM_CRITERIA = {
@@ -99,11 +13,9 @@ const ROOM_CRITERIA = {
   music_av: "録音資料、映像資料、楽譜、電子資料(CD-ROM等)に関する質問",
   parliament_gov: "内外の議会の会議録・議事資料、内外の官公報、法令集、判例集、条約集、内外の官庁の刊行資料目録・要覧・年次報告、統計資料類、政府間国際機関刊行資料、法律・政治分野の参考図書類に関する質問",
   newspaper: "新聞の原紙、新聞の縮刷版・復刻版、新聞のマイクロフィルム、新聞切抜資料に関する質問",
-  information: "上記の専門室のいずれにも明確には該当しない質問、総合的な案内・調べ方相談、または自動判定だけでは絞りきれない質問。インフォメーション(総合案内)では職員が直接ヒアリング(レファレンスインタビュー)を行い、自動判定で補いきれなかった部分を埋める。"
+  information: "上記の専門室のいずれにも明確には該当しない質問、総合的な案内・調べ方相談、または自動判定だけでは絞りきれない質問。インフォメーション(総合案内)では職員が直接ヒアリングを行い、補います。"
 };
 
-// 引継ぎ文書に載せる、利用者に分かりやすい室名。
-// 実際のNDL東京本館の室名と異なる場合があるので、運用に合わせて要調整。
 const ROOM_LABELS = {
   humanities: "人文総合情報室",
   science_economy: "科学技術・経済情報室",
@@ -116,177 +28,152 @@ const ROOM_LABELS = {
   information: "総合案内(インフォメーション)"
 };
 
-// ROOM_CRITERIAとROOM_LABELSのキーがずれると、handoverでroom_labelが
-// undefinedになるだけで気づきにくいため、モジュール読み込み時に検査する。
 for (const key of Object.keys(ROOM_CRITERIA)) {
   if (!(key in ROOM_LABELS)) {
     throw new Error(`ROOM_LABELS is missing a label for room "${key}"`);
   }
 }
 
-// 次に聞くべき質問の候補プール。
-// room(ROOM_CRITERIA)の分岐を直接切り分ける観点に絞っている。候補数を増やす
-// ほど一部の質問同士は多少重なるが(例: geography と specific_country_check)、
-// jevはstateに応じて最も有効な1問を選ぶだけなので、重なりがあること自体は
-// 問題にならない。実際に利用者へ聞く回数はMAX_TURNSで別途頭打ちにしている。
-// description は jev が選択理由を判断するための説明、text は実際に利用者に
-// 提示する質問文。
 const ROOM_CANDIDATE_QUESTIONS = {
-  // --- 主題・分野を絞る ---
   subject_area: {
-    description: "どのような分野のテーマか(人文科学/科学技術・経済/政治・法律など)を特定するための質問。humanities・science_economy・parliament_govの切り分けに有効。",
+    description: "どのような分野のテーマか(人文科学/科学技術・経済/政治・法律など)を特定するための質問。",
     text: "どのような分野のテーマについてお調べですか?(例:人文科学、科学技術・経済、政治・法律など)"
   },
   keyword_check: {
-    description: "主題を特定する具体的なキーワードや専門用語があるかどうかを確認する質問。subject_areaの判定を補強する。",
+    description: "主題を特定する具体的なキーワードや専門用語があるかどうかを確認する質問。",
     text: "調べたい内容を表す具体的なキーワードや専門用語はありますか?"
   },
   related_person_org: {
-    description: "関連する人物名・団体名・機関名があるかどうかを確認する質問。modern_politics(政治家・団体)やparliament_gov(官公庁・国際機関)の切り分けに有効。",
+    description: "関連する人物名・団体名・機関名があるかどうかを確認する質問。",
     text: "関連する人物名や団体・機関名など、手がかりになる固有名詞はありますか?"
   },
   science_tech_check: {
-    description: "科学技術分野の情報かどうかを直接確認する質問。science_economyの切り分けに有効。",
+    description: "科学技術分野の情報かどうかを直接確認する質問。",
     text: "科学技術分野(工学、医学、自然科学など)に関する内容ですか?"
   },
   economic_check: {
-    description: "経済・社会分野の情報かどうかを直接確認する質問。science_economyの切り分けに有効。",
+    description: "経済・社会分野の情報かどうかを直接確認する質問。",
     text: "経済・社会分野(産業、金融、社会統計など)に関する内容ですか?"
   },
   library_science_check: {
-    description: "図書館・図書館情報学関係の雑誌記事かどうかを直接確認する質問。humanitiesの切り分けに有効。",
+    description: "図書館・図書館情報学関係の雑誌記事かどうかを直接確認する質問。",
     text: "図書館学・図書館情報学に関連する内容ですか?"
   },
   reference_book_check: {
-    description: "百科事典や便覧など、総記・人文科学分野の幅広い参考図書を探しているかどうかを確認する質問。humanitiesの切り分けに有効。",
+    description: "百科事典や便覧など、総記・人文科学分野の幅広い参考図書を探しているかどうかを確認する質問。",
     text: "百科事典や便覧のような、幅広い分野を扱う参考図書をお探しですか?"
   },
-
-  // --- 時代・地理を絞る ---
   time_period: {
-    description: "対象の時代・年代を特定するための質問。classics・modern_politics・newspaperの切り分けに有効。",
+    description: "対象の時代・年代を特定するための質問。",
     text: "いつの時代・年代の情報をお探しですか?"
   },
   geography: {
-    description: "特定の国・地域や、日本占領期・移民関係かどうかを特定するための質問。modern_politics・parliament_govの切り分けに有効。",
+    description: "特定の国・地域や、日本占領期・移民関係かどうかを特定するための質問。",
     text: "特定の国や地域に関連する内容ですか?(例:日本の近現代史、占領期、移民関係など)"
   },
   specific_country_check: {
-    description: "特定の国の議会・政府に関する資料かどうかを確認する質問。geographyをさらに補強し、parliament_govの切り分けに有効。",
+    description: "特定の国の議会・政府に関する資料かどうかを確認する質問。",
     text: "特定の国の議会や政府に関する資料ですか?"
   },
   occupation_immigration_check: {
-    description: "日本占領期や日系移民に関する資料かどうかを直接確認する質問。modern_politicsの切り分けに有効。",
+    description: "日本占領期や日系移民に関する資料かどうかを直接確認する質問。",
     text: "日本の占領期や、海外への日系移民に関する内容ですか?"
   },
   political_history_check: {
-    description: "政治家や政党の活動記録など、日本近現代の政治史料かどうかを確認する質問。modern_politicsの切り分けに有効。",
+    description: "政治家や政党の活動記録など、日本近現代の政治史料かどうかを確認する質問。",
     text: "政治家や政党の活動など、日本の近現代政治史に関する内容ですか?"
   },
-
-  // --- 資料の形式を絞る ---
   material_format: {
-    description: "探している資料の大まかな形式(文献、地図、録音・映像、新聞、古典籍、議会・法令資料など)を特定するための質問。map・music_av・newspaper・classics・parliament_govの切り分けに有効。",
+    description: "探している資料の大まかな形式(文献、地図、録音・映像、新聞、古典籍、議会・法令資料など)を特定するための質問。",
     text: "探している資料の形式はどれに近いですか?(例:文献資料、地図、録音・映像資料、新聞、古典籍、議会資料や法令集など)"
   },
   rare_book_check: {
-    description: "貴重書・準貴重書・写本・古典籍にあたる特別な取り扱いの資料かどうかを直接確認する質問。classicsの切り分けに有効。",
+    description: "貴重書・準貴重書・写本・古典籍にあたる特別な取り扱いの資料かどうかを直接確認する質問。",
     text: "貴重書や写本、古典籍のような特別な取り扱いの資料をお探しですか?"
   },
   wakobon_check: {
-    description: "江戸期以前の和古書かどうかを直接確認する質問。classicsの切り分けに有効。",
+    description: "江戸期以前の和古書かどうかを直接確認する質問。",
     text: "江戸時代以前に作られた日本の古典籍(和古書)をお探しですか?"
   },
   kanseki_check: {
-    description: "清代以前の漢籍(中国の古典籍)かどうかを直接確認する質問。classicsの切り分けに有効。",
+    description: "清代以前の漢籍(中国の古典籍)かどうかを直接確認する質問。",
     text: "中国の古典籍(漢籍)をお探しですか?"
   },
   map_check: {
-    description: "明治以降の地形図・地質図・海図・住宅地図など、地図資料にあたるかどうかを直接確認する質問。mapの切り分けに有効。",
+    description: "明治以降の地形図・地質図・海図・住宅地図など、地図資料にあたるかどうかを直接確認する質問。",
     text: "地図資料(地形図や住宅地図など)をお探しですか?"
   },
   residential_map_check: {
-    description: "住宅地図かどうかを直接確認する質問。mapの切り分けに有効。",
+    description: "住宅地図かどうかを直接確認する質問。",
     text: "住宅地図をお探しですか?"
   },
   av_material_check: {
-    description: "録音資料・映像資料・楽譜・電子資料(CD-ROM等)にあたるかどうかを直接確認する質問。music_avの切り分けに有効。",
+    description: "録音資料・映像資料・楽譜・電子資料(CD-ROM等)にあたるかどうかを直接確認する質問。",
     text: "音声・映像資料や楽譜など、視聴覚系の資料をお探しですか?"
   },
   sheet_music_check: {
-    description: "楽譜資料かどうかを直接確認する質問。music_avの切り分けに有効。",
+    description: "楽譜資料かどうかを直接確認する質問。",
     text: "楽譜をお探しですか?"
   },
   digital_material_check: {
-    description: "CD-ROMなど電子的な形式の資料かどうかを直接確認する質問。music_avの切り分けに有効。",
+    description: "CD-ROMなど電子的な形式の資料かどうかを直接確認する質問。",
     text: "CD-ROMなど、電子的な形式の資料をお探しですか?"
   },
   newspaper_check: {
-    description: "新聞原紙・縮刷版・復刻版・マイクロフィルム・新聞切抜資料にあたるかどうかを直接確認する質問。newspaperの切り分けに有効。",
+    description: "新聞原紙・縮刷版・復刻版・マイクロフィルム・新聞切抜資料にあたるかどうかを直接確認する質問。",
     text: "新聞記事や新聞の切り抜きに関する資料をお探しですか?"
   },
   abstract_index_check: {
-    description: "抄録誌・索引誌のような二次情報資料を探しているかどうかを確認する質問。science_economyの特徴的な資料種別の切り分けに有効。",
+    description: "抄録誌・索引誌のような二次情報資料を探しているかどうかを確認する質問。",
     text: "特定の論文や記事を探すための抄録誌・索引誌のような資料をお探しですか?"
   },
-
-  // --- 政府・議会関係を絞る ---
   gov_legal_check: {
-    description: "法令集・判例集・条約集・議会会議録・統計資料など、政府や議会に関する資料かどうかを直接確認する質問。parliament_govの切り分けに有効。",
+    description: "法令集・判例集・条約集・議会会議録・統計資料など、政府や議会に関する資料かどうかを直接確認する質問。",
     text: "法令集、判例集、議会の会議録、統計資料など、政府・議会に関連する資料をお探しですか?"
   },
   statistics_check: {
-    description: "統計データや数値資料を探しているかどうかを確認する質問。parliament_govの切り分けに有効。",
+    description: "統計データや数値資料を探しているかどうかを確認する質問。",
     text: "統計データや数値資料をお探しですか?"
   },
   treaty_check: {
-    description: "条約や外交関係の資料かどうかを確認する質問。parliament_govの切り分けに有効。",
+    description: "条約や外交関係の資料かどうかを確認する質問。",
     text: "条約や外交関係に関する資料をお探しですか?"
   },
   international_org_check: {
-    description: "国際機関の刊行物や海外の議会・政府資料かどうかを確認する質問。parliament_govの切り分けに有効。",
+    description: "国際機関の刊行物や海外の議会・政府資料かどうかを確認する質問。",
     text: "国際機関や海外の議会・政府が発行した資料をお探しですか?"
   },
   annual_report_check: {
-    description: "官公庁の年次報告・要覧・刊行物目録を探しているかどうかを確認する質問。parliament_govの切り分けに有効。",
+    description: "官公庁の年次報告・要覧・刊行物目録を探しているかどうかを確認する質問。",
     text: "官公庁の年次報告書や要覧、刊行物目録のような資料をお探しですか?"
   },
-
-  // --- 総合案内・調べ方相談かどうかを絞る ---
   is_general_howto: {
-    description: "利用者が特定の資料ではなく、調べ方・探し方自体の相談をしているかを見極める質問。informationの切り分けに有効。",
+    description: "利用者が特定の資料ではなく、調べ方・探し方自体の相談をしているかを見極める質問。",
     text: "特定の資料をお探しというより、調べ方や探し方についてのご相談でしょうか?"
   },
   known_clues: {
-    description: "書名・著者名などの手がかりの有無を確認する質問。手がかりが乏しい場合はinformation(総合案内)寄りになりやすいため、その判断を補助する。",
+    description: "書名・著者名などの手がかりの有無を確認する質問。",
     text: "書名や著者名など、手がかりになりそうな情報はすでにお持ちですか?"
   }
 };
 
-// 質問を打ち切るまでの最大ターン数。ROOM_CANDIDATE_QUESTIONSの候補数を増やしても、
-// 実際に利用者に尋ねる回数はこの上限で頭打ちにする(全候補を尋ね切る前提ではなく、
-// jevがそのケースに応じて最も有効な数問だけを選び取る想定)。
 const ROOM_MAX_TURNS = 5;
 
-// 【振分け後の追加ヒアリング(POST_ROUTING_QUESTIONS)】
-// room(案内先)の判定そのものには使わないが、案内先が決まった後に職員が対応する
-// うえで役立つ情報を、追加でこの数だけ聞いてから引継ぎ文書を作成する。
-// room判定用の質問(ROOM_CANDIDATE_QUESTIONS)とは別プールにして、役割を混在させない。
 const POST_ROUTING_QUESTIONS = {
   specific_title_author_check: {
-    description: "書名・著者名・資料番号など、より具体的な手がかりを深掘りする質問。職員が資料を特定する助けになる。",
+    description: "書名・著者名・資料番号など、より具体的な手がかりを深掘りする質問。",
     text: "書名や著者名、資料番号など、より具体的な手がかりがあれば教えてください。"
   },
   purpose_use_check: {
-    description: "調べた内容を何に使うか(レポート提出、仕事、出版物制作、個人の興味など)を確認する質問。",
+    description: "調べた内容を何に使うかを確認する質問。",
     text: "調べた内容は、どのような用途で使う予定ですか?(レポート提出、仕事、出版物制作、個人の興味など)"
   },
   deadline_check: {
-    description: "資料が必要な期限(今日中かどうかなど)を確認する質問。対応の優先度に関わる。",
+    description: "資料が必要な期限を確認する質問。",
     text: "この件は今日中に必要ですか?それとも期限に余裕はありますか?"
   },
   depth_level_check: {
-    description: "概要で足りるか、詳しい情報が必要かを確認する質問。案内の仕方や資料の選び方に関わる。",
+    description: "概要で足りるか、詳しい情報が必要かを確認する質問。",
     text: "概要が分かれば十分ですか、それとも詳しい情報が必要ですか?"
   },
   quantity_check: {
@@ -294,11 +181,11 @@ const POST_ROUTING_QUESTIONS = {
     text: "必要な資料は1件程度で足りますか、それとも複数を比較したいですか?"
   },
   copy_needed_check: {
-    description: "資料の複写(コピー)が必要かどうかを確認する質問。複写窓口の案内が必要かに関わる。",
+    description: "資料の複写(コピー)が必要かどうかを確認する質問。",
     text: "資料の複写(コピー)は必要ですか?"
   },
   prior_research_check: {
-    description: "利用者がこれまでに自分で調べた内容・場所を確認する質問。二度手間を避けるのに役立つ。",
+    description: "これまでにご自身で調べた内容・場所を確認する質問。",
     text: "これまでにご自身で調べてみたことはありますか?(調べた場所や検索した言葉など)"
   },
   citation_needed_check: {
@@ -307,7 +194,6 @@ const POST_ROUTING_QUESTIONS = {
   }
 };
 
-// 振分け後の追加ヒアリングを打ち切るまでの最大ターン数。
 const POST_ROUTING_MAX_TURNS = 3;
 
 export default {
@@ -322,7 +208,6 @@ export default {
       return handleHandover(request, env);
     }
 
-    // それ以外は静的ファイル(public/配下)を配信する
     return env.ASSETS.fetch(request);
   }
 };
@@ -337,7 +222,6 @@ async function handleSystemOne(request, env) {
 
   const state = typeof payload?.state === "string" ? payload.state.trim() : "";
   const askedQuestions = Array.isArray(payload?.asked_questions)
-    // 既知のid(room用・振分け後用どちらか)以外は無視する
     ? payload.asked_questions.filter(
         (id) =>
           typeof id === "string" &&
@@ -358,8 +242,6 @@ async function handleSystemOne(request, env) {
     return jsonError("サーバー側でAPIキーが未設定です。", 500);
   }
 
-  // asked_questionsを、room用・振分け後用のidにそれぞれ振り分ける。
-  // クライアントは区別せず同じ配列に積んでいくだけでよい(サーバー側で判定する)。
   const askedRoomIds = askedQuestions.filter((id) => id in ROOM_CANDIDATE_QUESTIONS);
   const askedPostIds = askedQuestions.filter((id) => id in POST_ROUTING_QUESTIONS);
   const remainingRoomIds = Object.keys(ROOM_CANDIDATE_QUESTIONS).filter(
@@ -371,10 +253,6 @@ async function handleSystemOne(request, env) {
   const roomPoolExhausted = remainingRoomIds.length === 0 || askedRoomIds.length >= ROOM_MAX_TURNS;
   const postPoolExhausted = remainingPostIds.length === 0 || askedPostIds.length >= POST_ROUTING_MAX_TURNS;
 
-  // room判定がこのターンで確定するかどうかは、jevの結果(confidence)を見るまで
-  // 分からない。そこで「room用の次の質問」と「振分け後用の次の質問」を同じ呼び出しの
-  // 中で並行して評価させておき(jevは質問を並列評価するため追加コストはほぼ無い)、
-  // 結果を受け取ってから、実際にどちらを使うかをコード側で決める。
   const questions = {
     room: {
       type: "choice",
@@ -411,8 +289,6 @@ async function handleSystemOne(request, env) {
   });
 
   if (!upstream.ok) {
-    // upstreamのエラー詳細はそのまま外に出さず、汎用メッセージに変換する。
-    // 原因調査用にステータスと本文はログへ(wrangler tailで見える)。
     const errBody = await upstream.text().catch(() => "(本文取得失敗)");
     console.error(`jev API error: status=${upstream.status} body=${errBody}`);
     return jsonError("jevの呼び出しに失敗しました。", upstreamErrorStatus(upstream.status));
@@ -425,9 +301,6 @@ async function handleSystemOne(request, env) {
     return jsonError("jevからの応答の解析に失敗しました。", 502);
   }
 
-  // --- フェーズ1: 案内先(room)の判定 ---
-  // room.confidenceがしきい値以上、またはroom用の候補を聞き尽くした場合、
-  // このフェーズは完了とみなす。
   const roomConfidence = data?.answers?.room?.confidence;
   const confidenceEnough = typeof roomConfidence === "number" && roomConfidence >= ROOM_CONFIDENCE_THRESHOLD;
   let phase1Done = confidenceEnough || roomPoolExhausted;
@@ -438,8 +311,6 @@ async function handleSystemOne(request, env) {
     if (nq?.choice && ROOM_CANDIDATE_QUESTIONS[nq.choice]) {
       nextQuestion = { choice: nq.choice, text: ROOM_CANDIDATE_QUESTIONS[nq.choice].text };
     } else {
-      // jevの応答形式が想定外でchoiceが取れない場合、フェーズ1で止まってしまわない
-      // よう強制的に完了扱いにする。
       phase1Done = true;
     }
   }
@@ -448,9 +319,6 @@ async function handleSystemOne(request, env) {
     ? (confidenceEnough ? data?.answers?.room?.choice ?? "information" : "information")
     : null;
 
-  // --- フェーズ2: 振分け後の追加ヒアリング ---
-  // フェーズ1が完了して初めて始まる。ここが終わるまでsufficientはtrueにしない
-  // (= Geminiによる引継ぎ文書生成はフェーズ2の完了後まで行わない)。
   let sufficient;
   if (!phase1Done) {
     sufficient = false;
@@ -462,14 +330,11 @@ async function handleSystemOne(request, env) {
       nextQuestion = { choice: nq.choice, text: POST_ROUTING_QUESTIONS[nq.choice].text };
       sufficient = false;
     } else {
-      // フェーズ2も応答形式が想定外なら、そこで打ち切って良いこととする。
       sufficient = true;
     }
   }
 
   if (data?.answers) {
-    // クライアントは answers.next_question だけを見ればよいように統一する
-    // (room用/振分け後用のどちらから来たかは意識させない)。
     if (nextQuestion) {
       data.answers.next_question = nextQuestion;
     } else {
@@ -479,10 +344,40 @@ async function handleSystemOne(request, env) {
     delete data.answers.next_question_post;
   }
 
-  return new Response(JSON.stringify({ ...data, sufficient, final_room: finalRoom }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
-  });
+  // ★ 専門室選択UI用に確率・説明文付きの候補一覧(確率降順)を作成
+  const rawProbabilities = data?.answers?.room?.probabilities || {};
+  const selectedChoice = data?.answers?.room?.choice;
+  const selectedConfidence = data?.answers?.room?.confidence;
+
+  const roomCandidates = Object.keys(ROOM_CRITERIA).map((roomId) => {
+    let prob = rawProbabilities[roomId];
+    if (typeof prob !== "number") {
+      if (roomId === selectedChoice && typeof selectedConfidence === "number") {
+        prob = selectedConfidence;
+      } else {
+        prob = 0;
+      }
+    }
+    return {
+      id: roomId,
+      label: ROOM_LABELS[roomId] || roomId,
+      description: ROOM_CRITERIA[roomId] || "",
+      confidence: Math.round(prob * 100)
+    };
+  }).sort((a, b) => b.confidence - a.confidence);
+
+  return new Response(
+    JSON.stringify({ 
+      ...data, 
+      sufficient, 
+      final_room: finalRoom,
+      room_candidates: roomCandidates 
+    }), 
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    }
+  );
 }
 
 async function handleHandover(request, env) {
@@ -514,8 +409,6 @@ async function handleHandover(request, env) {
   const roomLabel = ROOM_LABELS[finalRoom];
   const model = env.GEMINI_MODEL || GEMINI_MODEL_DEFAULT;
 
-  // 指示(system_instruction)と、利用者由来のデータ(input)を分離して渡す。
-  // 利用者が入力した文章はinput側にだけ入り、指示文としては扱われない。
   const systemInstruction = `あなたは国立国会図書館のレファレンスサービス担当者です。
 利用者に対して自動応答システムが行ったヒアリング(質問と回答)の記録が、次のメッセージで
 """で囲まれて渡されます。この記録をもとに、案内先である「${roomLabel}」の担当職員へ
@@ -537,10 +430,6 @@ async function handleHandover(request, env) {
 ${state}
 """`;
 
-  // Gemini Interactions API (POST /v1beta/interactions)
-  // https://ai.google.dev/api/interactions-api
-  // store:false は、リクエスト/レスポンスをGoogle側に保存させない指定。
-  // 利用者の相談内容を含むため、保存しない設定にしている。
   const upstream = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     headers: {
@@ -556,8 +445,6 @@ ${state}
   });
 
   if (!upstream.ok) {
-    // 利用者には詳細を出さないが、開発時に原因を特定できるよう
-    // ステータスと本文をWorkerのログに残す(wrangler tailで見える)。
     const errBody = await upstream.text().catch(() => "(本文取得失敗)");
     console.error(`Gemini API error: status=${upstream.status} model=${model} body=${errBody}`);
     return jsonError("Gemini APIの呼び出しに失敗しました。", upstreamErrorStatus(upstream.status));
@@ -572,7 +459,6 @@ ${state}
 
   const document = extractInteractionText(data);
   if (!document) {
-    // status が failed の場合や、安全性ブロック等で出力が空になるケースを含む
     console.error(`Gemini API empty output: status=${data?.status} errors=${JSON.stringify(data?.errors)}`);
     return jsonError("引継ぎ文書を生成できませんでした。", 502);
   }
@@ -586,9 +472,6 @@ ${state}
   );
 }
 
-// Interactions APIのレスポンスから、モデルが出力したテキストを取り出す。
-// steps[] のうち type:"model_output" のステップの content[] にある
-// type:"text" のブロックを連結する(thoughtなど他のステップは無視する)。
 function extractInteractionText(data) {
   if (!data || !Array.isArray(data.steps)) return "";
   const parts = [];
@@ -603,9 +486,6 @@ function extractInteractionText(data) {
   return parts.join("").trim();
 }
 
-// 上流(jev / Gemini)のエラーステータスを、クライアントへ返すステータスに変換する。
-// 上流の404をそのまま返すと「/handoverというルート自体が無い」と紛らわしいため、
-// レート制限(429)以外は502(Bad Gateway)に統一する。
 function upstreamErrorStatus(status) {
   return status === 429 ? 429 : 502;
 }

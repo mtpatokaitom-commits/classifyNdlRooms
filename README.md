@@ -3,13 +3,14 @@
 利用者の相談内容から、国立国会図書館（NDL）東京本館の一次受け対象となる専門室（または総合案内）へ自動で振り分け、担当職員向けの引継ぎ文書を生成するための Cloudflare Worker とフロントエンドです。
 
 ※ レファレンスの一次受けを行わない「古典籍資料室」および「憲政資料室」は判定対象から外しています。
+※ 具体的な資料名（書名・著者名・論文名など）が判明している場合は、まず「総合案内（インフォメーション）」へ優先案内します。
 
 ---
 
 ## 主な機能・特徴
 
 1. **2フェーズ構成のAI対話インタビュー**
-   - **フェーズ1 (案内先の判定)**: 利用者の入力から、一次受け可能な専門室を絞り込むための質問を行います。
+   - **フェーズ1 (案内先の判定)**: 利用者の入力から、具体的な資料名が判明しているか、および適切な専門室かを絞り込むための質問を行います。
    - **フェーズ2 (振分け後の追加ヒアリング)**: 案内先確定後、担当職員が書庫出納や調査回答をスムーズに行うための補足情報を追加でヒアリングします。
 2. **適合度（確率）上位3候補の提示と最終選択UI**
    - ヒアリング完了後、適合度の高い上位3つの専門室（および推奨バッジ）を表示し、利用者が最も適していると思う案内先を選択できます。
@@ -44,6 +45,7 @@
 5. **議会官庁資料室** (`parliament_gov`)
 6. **新聞資料室** (`newspaper`)
 7. **総合案内(インフォメーション)** (`information`)
+   - **特記事項**: 具体的な資料名（書名・著者名・雑誌名・論文タイトル等）が判明している場合、所蔵・出納案内のため最優先で案内されます。
 
 ---
 
@@ -108,35 +110,35 @@ API 仕様
 JSON
 {
   "state": "利用者の相談文 + これまでの質問と回答の履歴(全文)",
-  "asked_questions": ["subject_area", "time_period"]
+  "asked_questions": ["specific_title_known_check", "subject_area"]
 }
 レスポンス例 (ヒアリング完了時):
 
 JSON
 {
   "answers": {
-    "room": { "choice": "science_economy", "confidence": 0.82 }
+    "room": { "choice": "information", "confidence": 0.88 }
   },
   "sufficient": true,
-  "final_room": "science_economy",
+  "final_room": "information",
   "room_candidates": [
+    {
+      "id": "information",
+      "label": "総合案内(インフォメーション)",
+      "description": "探している『具体的な資料名(書名、著者名、雑誌名、記事・論文タイトル、資料番号等)』がすでに特定・判明している場合...",
+      "confidence": 88
+    },
     {
       "id": "science_economy",
       "label": "科学技術・経済情報室",
       "description": "自然科学、工学、医学、産業、経済、経営、商業、統計、路線価...",
-      "confidence": 82
-    },
-    {
-      "id": "parliament_gov",
-      "label": "議会官庁資料室",
-      "description": "内外の議会会議録・議事資料、官報・公報...",
-      "confidence": 12
+      "confidence": 8
     },
     {
       "id": "humanities",
       "label": "人文総合情報室",
       "description": "総記、哲学、宗教、歴史、古文書、一般地理・人物...",
-      "confidence": 6
+      "confidence": 4
     }
   ]
 }
@@ -146,13 +148,13 @@ JSON
 JSON
 {
   "state": "/systemoneに渡していた対話全文",
-  "final_room": "science_economy"
+  "final_room": "information"
 }
 レスポンス:
 
 JSON
 {
-  "room": "science_economy",
-  "room_label": "科学技術・経済情報室",
+  "room": "information",
+  "room_label": "総合案内(インフォメーション)",
   "document": "【相談内容の要約】\n...\n\n【ヒアリングで判明した主な情報】\n- ...\n\n【担当職員が確認すべき点や懸念事項】\n..."
 }

@@ -22,7 +22,12 @@
 
 ## 構成
 
-.├── public/│   └── index.html   静的ページ(Vue 3、Web Speech API、明朝体UI)。利用者はここで相談・回答を行う├── src/│   └── worker.js     Workerスクリプト。静的ファイルの配信、/systemone、/handover の中継を行う├── wrangler.jsonc    Cloudflare Workerの設定└── README.md        本ドキュメント
+.├── public/
+ │   └── index.html   静的ページ(Vue 3、Web Speech API、明朝体UI)。利用者はここで相談・回答を行う
+ ├── src/
+ │   └── worker.js     Workerスクリプト。静的ファイルの配信、/systemone、/handover の中継を行う
+ ├── wrangler.jsonc    Cloudflare Workerの設定
+ └── README.md        本ドキュメント
 ---
 
 ## 全体の流れ

@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>国立国会図書館 レファレンス案内</title>
+<!-- 明朝体フォント (Shippori Mincho) の読み込み -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&display=swap" rel="stylesheet">
@@ -112,7 +113,6 @@
     box-shadow: 0 0 0 2px rgba(163, 126, 56, 0.2);
   }
 
-  /* 音声操作コントローラー */
   .voice-btn-inline {
     position: absolute;
     right: 8px;
@@ -165,7 +165,6 @@
     background: #e5dac8;
   }
 
-  /* ボタン */
   .btn-group {
     display: flex;
     justify-content: flex-end;
@@ -209,7 +208,6 @@
     background: #eae2d5;
   }
 
-  /* 対話履歴 */
   .history {
     margin-bottom: 24px;
     background: #f5f0e8;
@@ -230,7 +228,6 @@
     padding-bottom: 0;
   }
 
-  /* 専門室候補リスト */
   .candidate-list {
     display: flex;
     flex-direction: column;
@@ -309,7 +306,6 @@
     line-height: 1.5;
   }
 
-  /* 結果表示 */
   .room-label-box {
     font-family: var(--serif-font);
     font-size: 1.25rem;
@@ -348,12 +344,13 @@
     <div class="header-sub">レファレンス相談・専門室自動案内カウンター</div>
   </div>
 
+  <!-- 1. 初期相談入力 -->
   <div class="card" v-if="phase === 'intro'">
     <p class="question-text">お調べになりたいテーマや、探している資料についてご記入ください。</p>
     <div class="input-wrapper">
       <textarea 
         v-model="initialQuestion" 
-        placeholder="例: 明治期の東京における地形図や住宅地図を探しています"
+        placeholder="例: 昭和期の特定地域の路線価や地価の推移について調べています"
         @keydown.ctrl.enter="start" 
         @keydown.cmd.enter="start"
       ></textarea>
@@ -369,6 +366,7 @@
     </div>
   </div>
 
+  <!-- 2. 追加ヒアリング質問 -->
   <div class="card" v-else-if="phase === 'asking'">
     <div class="history" v-if="turns.length">
       <div class="turn" v-for="(t, i) in turns" :key="i">
@@ -401,10 +399,12 @@
     </div>
   </div>
 
+  <!-- 3. 通信中 -->
   <div class="card loading" v-else-if="phase === 'loading'">
     資料データベース及び案内基準を照合しております…
   </div>
 
+  <!-- 4. 専門室選択画面 -->
   <div class="card" v-else-if="phase === 'select_room'">
     <div class="audio-bar">
       <p class="question-text" style="margin: 0; flex: 1;">ヒアリングが完了しました。ご案内先を選択してください。</p>
@@ -437,6 +437,7 @@
     </div>
   </div>
 
+  <!-- 5. 確定結果・引継ぎ書表示 -->
   <div class="card" v-else-if="phase === 'result'">
     <div class="room-label-box">ご案内窓口: {{ roomLabel }}</div>
     <div class="audio-bar" style="justify-content: flex-end;">
@@ -448,6 +449,7 @@
     </div>
   </div>
 
+  <!-- 6. エラー表示 -->
   <div class="card error" v-else-if="phase === 'error'">
     <p>{{ errorMessage }}</p>
     <div class="btn-group">
@@ -478,11 +480,9 @@ createApp({
     const documentText = ref("");
     const errorMessage = ref("");
 
-    // 音声認識・合成の状態管理
     const isListening = ref(false);
     let recognition = null;
 
-    // Web Speech API (音声認識) の初期化
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
@@ -525,13 +525,12 @@ createApp({
       };
     }
 
-    // Web Speech API (音声読み上げ)
     function speak(text) {
       if (!('speechSynthesis' in window)) {
         alert("お使いのブラウザは音声読み上げに対応していません。");
         return;
       }
-      window.speechSynthesis.cancel(); // 再生中の音声を停止
+      window.speechSynthesis.cancel();
       const uttr = new SpeechSynthesisUtterance(text);
       uttr.lang = 'ja-JP';
       uttr.rate = 1.0;
@@ -552,6 +551,7 @@ createApp({
     }
 
     async function proceed() {
+      window.speechSynthesis?.cancel();
       phase.value = "loading";
       try {
         const data = await postJson("/systemone", {
@@ -583,6 +583,7 @@ createApp({
 
     async function confirmRoom() {
       if (!selectedRoomId.value) return;
+      window.speechSynthesis?.cancel();
       phase.value = "loading";
       try {
         const handover = await postJson("/handover", {

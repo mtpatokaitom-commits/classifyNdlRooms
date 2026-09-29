@@ -1,31 +1,9 @@
 {
-  // Cloudflareダッシュボード上でのWorker名。デプロイ先のURL
-  // (<name>.<your-subdomain>.workers.dev)にも使われる。
   "name": "classifyndlrooms",
-
-  // Workerのエントリスクリプト。src/worker.jsが
-  // POST /systemone(jev中継)とPOST /handover(Gemini中継)を処理する。
   "main": "src/worker.js",
-
-  // wrangler.jsoncの互換性動作の基準日。新規に発行した日付を入れておけばよい。
   "compatibility_date": "2026-09-27",
-
-  // 静的アセット(public/配下)の配信設定。
-  // worker.js内の env.ASSETS.fetch(request) はこのbinding名に対応している。
   "assets": {
     "directory": "public",
     "binding": "ASSETS"
   }
-
-  // 機密でない環境変数はここに書ける(例: "vars": { "GEMINI_MODEL": "gemini-3.5-flash-lite" })。
-  // GEMINI_MODELは省略可。省略時はworker.js内のGEMINI_MODEL_DEFAULTを使う。
-  // 注意: ここに書いた値はコードの既定値より優先される。また、wrangler deployのたびに
-  // ダッシュボードで手動設定した同名の変数がここの値で上書きされる。
-  //
-  // TYPESAFE_API_KEYとGEMINI_API_KEYは秘密情報なので、ここには書かず、
-  // Workerの Settings → Variables and Secrets に「Secret」として登録すること
-  // (Git連携のBuild settingsにある"Build variables"は別物で、Workerの実行時には渡らない)。
-  // CLIなら:
-  //   wrangler secret put TYPESAFE_API_KEY
-  //   wrangler secret put GEMINI_API_KEY
 }

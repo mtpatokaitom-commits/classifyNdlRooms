@@ -4,15 +4,15 @@ const MAX_STATE_LENGTH = 4000;
 const GEMINI_MODEL_DEFAULT = "gemini-flash-lite-latest";
 const ROOM_CONFIDENCE_THRESHOLD = 0.65;
 
-// 一次受け対象の専門室定義 (古典籍資料室・憲政資料室を除外)
+// 一次受け対象の専門室定義 (具体名が分かっている場合は information を優先するルールを明記)
 const ROOM_CRITERIA = {
-  humanities: "総記、哲学、宗教、歴史、古文書、一般地理・人物、文化、芸術、言語、文学、図書館・情報学に関する参考図書(辞書・事典・書誌・人名録等)や主要雑誌に関する質問",
-  science_economy: "自然科学、工学、医学、産業、経済、経営、商業、統計、路線価(財産評価基準書)・地価公示等の不動産・資産評価資料、工業規格(JIS等)、特許、市場調査、抄録・索引誌に関する質問",
-  map: "明治以降の一枚もの地図(国土地理院地形図、地質図、海図、空中写真)、住宅地図(ゼンリン等)、都市計画図、古地図、外国製地図に関する質問",
-  music_av: "録音資料(レコード・CD等)、映像資料(DVD・映画・番組等)、楽譜(邦楽譜・洋楽譜・スコア)、パッケージ型電子資料(CD-ROM等)に関する質問",
-  parliament_gov: "内外の議会会議録・議事資料、官報・公報、現行・歴史的法令・判例・条約集、近現代政治資料、官公庁の刊行物(白書・年次報告・公的統計)、国際機関(国連・OECD等)資料、法律・政治参考図書に関する質問",
-  newspaper: "全国紙・地方紙・専門紙・業界紙等の新聞原紙、縮刷版、復刻版、マイクロフィルム、新聞切抜資料、過去の新聞記事検索に関する質問",
-  information: "上記の専門室のいずれにも明確には該当しない質問、複数分野に跨がる複合的質問、調べ方・探し方自体の総合的相談、または手がかりが乏しく自動判定で絞りきれない質問"
+  humanities: "総記、哲学、宗教、歴史、古文書、一般地理・人物、文化、芸術、言語、文学、図書館・情報学に関する参考図書(辞書・事典・書誌・人名録等)や主要雑誌に関する調べ方相談・レファレンス",
+  science_economy: "自然科学、工学、医学、産業、経済、経営、商業、統計、路線価(財産評価基準書)・地価公示等の不動産・資産評価資料、工業規格(JIS等)、特許、市場調査、抄録・索引誌に関する調べ方相談・レファレンス",
+  map: "明治以降の一枚もの地図(国土地理院地形図、地質図、海図、空中写真)、住宅地図(ゼンリン等)、都市計画図、古地図、外国製地図に関する調べ方相談・レファレンス",
+  music_av: "録音資料(レコード・CD等)、映像資料(DVD・映画・番組等)、楽譜(邦楽譜・洋楽譜・スコア)、パッケージ型電子資料(CD-ROM等)に関する調べ方相談・レファレンス",
+  parliament_gov: "内外の議会会議録・議事資料、官報・公報、現行・歴史的法令・判例・条約集、近現代政治資料、官公庁の刊行物(白書・年次報告・公的統計)、国際機関(国連・OECD等)資料、法律・政治参考図書に関する調べ方相談・レファレンス",
+  newspaper: "全国紙・地方紙・専門紙・業界紙等の新聞原紙、縮刷版、復刻版、マイクロフィルム、新聞切抜資料、過去の新聞記事検索に関する調べ方相談・レファレンス",
+  information: "探している『具体的な資料名(書名、著者名、雑誌名、記事・論文タイトル、資料番号等)』がすでに特定・判明している場合。または、上記のいずれの専門室にも明確には当てはまらない質問、総合的な利用案内・館内案内・出納や所蔵確認の手続き相談"
 };
 
 const ROOM_LABELS = {
@@ -31,22 +31,26 @@ for (const key of Object.keys(ROOM_CRITERIA)) {
   }
 }
 
-// 質問プール (対象除外室に依存していた質問を整理)
+// 質問プール (具体的な資料名の特定状況を確認する質問を優先配置)
 const ROOM_CANDIDATE_QUESTIONS = {
+  specific_title_known_check: {
+    description: "探している具体的な資料名(書名、著者名、雑誌名、論文タイトルなど)がすでに決まっているか確認する質問。具体的な資料名が判明している場合は information (総合案内) への案内にきわめて有効。",
+    text: "探している『具体的な資料名(書名、著者名、雑誌名、論文タイトルなど)』はすでにお決まりですか?"
+  },
   subject_area: {
     description: "人文科学、自然科学・工学・経済、政治・法律など、どの主題分野に関する内容かを大まかに特定する質問。humanities / science_economy / parliament_gov の切り分けに有効。",
     text: "お調べのテーマはどの分野に近いですか?(例: 人文・歴史・文学、科学技術・産業・経済、政治・法律など)"
   },
   science_tech_industry_check: {
-    description: "自然科学、工学、医学、IT、製造業、エネルギーなど科学技術・産業分野全般に関するかを確認する質問。science_economy の判定に有効。",
+    description: "自然科学、工学、医学、IT、製造業、エネルギーなど科学技術・産業分野全般に関する調べ方かを確認する質問。science_economy の判定に有効。",
     text: "科学技術(自然科学、工学、医学等)や製造・産業技術に関する内容ですか?"
   },
   economy_company_check: {
-    description: "経済、経営、企業情報、業界動向、金融、路線価・地価公示・不動産価格、社会統計などに関する内容かを確認する質問。science_economy の判定に有効。",
+    description: "経済、経営、企業情報、業界動向、金融、路線価・地価公示・不動産価格、社会統計などに関する調べ方かを確認する質問。science_economy の判定に有効。",
     text: "経済、業界動向、企業情報、路線価・地価などの価格・統計データに関する内容ですか?"
   },
   history_literature_check: {
-    description: "歴史、文学、哲学、宗教、民俗、言語、古文書、芸術などの人文科学分野かを確認する質問。humanities の判定に有効。",
+    description: "歴史、文学、哲学、宗教、民俗、言語、古文書、芸術などの人文科学分野の調べ方かを確認する質問。humanities の判定に有効。",
     text: "歴史、文学、古文書、哲学、芸術、文化などの人文科学分野に関する内容ですか?"
   },
   library_science_check: {
@@ -54,7 +58,7 @@ const ROOM_CANDIDATE_QUESTIONS = {
     text: "図書館学・図書館情報学や書誌に関する専門的な内容ですか?"
   },
   map_detail_check: {
-    description: "明治以降の国土地理院地形図、住宅地図(ゼンリン等)、都市計画図、土地宝典、地質図、空中写真、外国製地図かを確認する質問。map の決定打となる。",
+    description: "明治以降の国土地理院地形図、住宅地図(ゼンリン等)、都市計画図、土地宝典、地質図、空中写真、外国製地図の調べ方かを確認する質問。map の決定打となる。",
     text: "国土地理院の地形図、住宅地図(ゼンリン等)、土地宝典、空中写真などの地図資料をお探しですか?"
   },
   residential_map_check: {
@@ -62,11 +66,11 @@ const ROOM_CANDIDATE_QUESTIONS = {
     text: "特定の場所の建物や居住者がわかる住宅地図や都市計画図をお探しですか?"
   },
   music_av_check: {
-    description: "SP盤・LP盤・CD等の録音資料、DVD・映画・舞台等の映像資料、楽譜(洋楽・邦楽・スコア)、CD-ROM等のパッケージ型電子資料かを確認する質問。music_av の決定打となる。",
+    description: "SP盤・LP盤・CD等の録音資料、DVD・映画・舞台等の映像資料、楽譜(洋楽・邦楽・スコア)、CD-ROM等のパッケージ型電子資料を探しているかを確認する質問。music_av の決定打となる。",
     text: "CD・レコード等の録音資料、DVD等の映像資料、あるいは楽譜(スコア)をお探しですか?"
   },
   parliament_legal_check: {
-    description: "国会・帝国議会や海外の会議録、官報・公報、法令集、判例集、条約集、白書・政府統計、国連・OECD等の国際機関資料かを確認する質問。parliament_gov の決定打となる。",
+    description: "国会・帝国議会や海外の会議録、官報・公報、法令集、判例集、条約集、白書・政府統計、国連・OECD等の国際機関資料の調べ方かを確認する質問。parliament_gov の決定打となる。",
     text: "議会の会議録、官報、法令・判例集、条約、政府発行の白書や国際機関(国連等)の資料ですか?"
   },
   statistics_whitepaper_check: {
@@ -82,12 +86,8 @@ const ROOM_CANDIDATE_QUESTIONS = {
     text: "新聞(全国紙、地方紙、業界紙など)の過去の記事、縮刷版、マイクロフィルムをお探しですか?"
   },
   is_general_reference: {
-    description: "特定の資料の特定ではなく、特定のテーマについての調べ方・探し方(どこを当たればよいか)自体の相談かを確認する質問。information の判定に有効。",
-    text: "特定の資料名が決まっているわけではなく、効率的な調べ方や探し方についてのご相談ですか?"
-  },
-  clues_exist_check: {
-    description: "著者名、書名、発行年、記事の見出しなどの手がかりを既に持っているかを確認する質問。",
-    text: "お探しの情報について、書名・著者名・記事のタイトル・時期などの手がかりはお手元にありますか?"
+    description: "特定のテーマについての調べ方・探し方自体の相談か、利用案内・出納手続きかを確認する質問。information の判定に有効。",
+    text: "テーマの調べ方相談というよりは、館内での所蔵確認や出納・資料請求の手続きについてのご相談ですか?"
   }
 };
 
@@ -190,14 +190,14 @@ async function handleSystemOne(request, env) {
   const questions = {
     room: {
       type: "choice",
-      instructions: "これまでの対話全体を踏まえ、利用者の質問に最も適した国立国会図書館 東京本館の専門室を選んでください。確信が持てない場合でも、現時点で最も近いものを選んでください。",
+      instructions: "これまでの対話全体を踏まえ、利用者の質問に最も適した国立国会図書館 東京本館の専門室(またはインフォメーション)を選んでください。具体的な資料名(書名や論文名等)がすでに判明している場合は、『総合案内(インフォメーション)』を優先して選んでください。",
       criteria: ROOM_CRITERIA
     }
   };
   if (!roomPoolExhausted) {
     questions.next_question_room = {
       type: "choice",
-      instructions: "案内先の専門室の判定に確信が持てない場合に、次に利用者へ尋ねるべき最も情報量の多い質問を1つ選んでください。",
+      instructions: "案内先の専門室の判定に確信が持てない場合に、次に利用者へ尋ねるべき最も情報量の多い質問を1つ選んでください。具体名の有無が分からない場合は、具体名があるか確認する質問を優先してください。",
       criteria: Object.fromEntries(
         remainingRoomIds.map((id) => [id, ROOM_CANDIDATE_QUESTIONS[id].description])
       )
@@ -278,7 +278,7 @@ async function handleSystemOne(request, env) {
     delete data.answers.next_question_post;
   }
 
-  // ★ 専門室候補リストの算出（確率降順でソートし、上位3件のみ抽出）
+  // 専門室候補リストの算出（確率降順でソートし、上位3件のみ抽出）
   const rawProbabilities = data?.answers?.room?.probabilities || {};
   const selectedChoice = data?.answers?.room?.choice;
   const selectedConfidence = data?.answers?.room?.confidence;
@@ -300,7 +300,7 @@ async function handleSystemOne(request, env) {
     };
   })
   .sort((a, b) => b.confidence - a.confidence)
-  .slice(0, 3); // ★ 提示する候補を上位3件に制限
+  .slice(0, 3); // 上位3件に制限
 
   return new Response(
     JSON.stringify({ 
